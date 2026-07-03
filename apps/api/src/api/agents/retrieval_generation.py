@@ -1,8 +1,22 @@
 import openai
 from qdrant_client import QdrantClient
 from langsmith import traceable, get_current_run_tree
+import instructor
+from pydantic import BaseModel, Field
+from qdrant_client.models import Filter, FieldCondition, MatchValue
+from qdrant_client.models import Prefetch, Document
+from qdrant_client import models
+from api.agents.utils.prompt_management import prompt_template_config
 
 qdrant_client = QdrantClient(url='http://qdrant:6333')
+
+class RAGUsedContext(BaseModel):
+    id: str = Field(description="The ID of the item used to answer the question")
+    description: str = Field(description="The description of the item used to answer the question")
+
+class RAGGenerationResponse(BaseModel):
+    answer: str = Field(description="The answer to the user's question")
+    references: list[RAGUsedContext] = Field(description="List of items used to answer the question")
 
 @traceable(
     name='embed_query',
@@ -31,12 +45,27 @@ def get_embedding(text, model='text-embedding-3-small'):
     name='retrieve_data',
     run_type='retriever',
 )
-def retrieve_data(query, qdrant_client, collection_name='amazon-items-collection-01', k=5):
+def retrieve_data(query, qdrant_client, collection_name='amazon-items-collection-01-hybrid-search', k=5):
     query_embedding = get_embedding(query)
 
     results = qdrant_client.query_points(
         collection_name=collection_name,
-        query=query_embedding,
+        prefetch=[
+            Prefetch(
+                query=query_embedding,
+                using="text-embedding-3-small",
+                limit=20
+            ),
+            Prefetch(
+                query=Document(
+                    text=query,
+                    model="qdrant/bm25",
+                ),
+                using="bm25",
+                limit=20
+            )
+        ],
+        query=models.RrfQuery(rrf=models.Rrf(weights=[3,1])),
         limit=k
     )
 
@@ -75,22 +104,8 @@ def process_context(retrieve_context):
     run_type='prompt',
 )
 def build_prompt(question, formatted_context):
-    prompt = f"""
-    You are a shopping assistant that can answer questions about the products in stock.
-
-    You will be given a question and a list of context.
-
-    Instructions:
-    - Answer the question based on the context only.
-    - Never use word context and refer to it as the available products.
-    - Do not use markdown formatting
-
-    Context:
-    {formatted_context}
-
-    Question:
-    {question}
-    """
+    template = prompt_template_config('api/agents/prompts/retrieval_generation.yml', 'retrieval_generation')
+    prompt = template.render(formatted_context=formatted_context, question=question)
     return prompt
 
 @traceable(
@@ -102,22 +117,28 @@ def build_prompt(question, formatted_context):
     },
 )
 def generate_answer(prompt):
-    response = openai.chat.completions.create(
-        model="gpt-5.4-nano",
+    client = instructor.from_provider(
+        "openai/gpt-5.4-nano",
+        mode=instructor.Mode.RESPONSES_TOOLS
+    )
+
+    response, raw_response = client.create_with_completion(
         messages=[
             {"role": "system", "content": prompt}
         ],
-        reasoning_effort='none'
+        reasoning={'effort': 'none'},
+        response_model=RAGGenerationResponse
     )
+
     current_run = get_current_run_tree()
     if current_run:
         current_run.metadata['usage_metadata'] = {
-            'input_tokens': response.usage.prompt_tokens,
-            'output_tokens': response.usage.completion_tokens,
-            'total_tokens': response.usage.total_tokens,
+            'input_tokens': raw_response.usage.input_tokens,
+            'output_tokens': raw_response.usage.output_tokens,
+            'total_tokens': raw_response.usage.total_tokens,
         }
 
-    return response.choices[0].message.content
+    return response
 
 @traceable(
     name='rag_pipeline',
@@ -129,10 +150,45 @@ def rag_pipeline(question, qdrant_client, topk=5):
     answer = generate_answer(prompt)
     
     final_answer = {
-        'answer': answer,
+        'answer': answer.answer,
+        'references': answer.references,
         'question': question,
         'retrieved_context_ids': retrieved_context['retrieved_context_ids'],
-        'retrieved_context': retrieved_context['retrieved_context_texts'],
+        'retrieved_context_texts': retrieved_context['retrieved_context_texts'],
     }
 
     return final_answer
+
+def rag_pipeline_wrapper(question, topk=5):
+    qdrant_client = QdrantClient(url='http://qdrant:6333')
+
+    result = rag_pipeline(question, qdrant_client, topk)
+
+    used_context = []
+
+    for reference in result.get('references', []):
+        payload = qdrant_client.scroll(
+            collection_name='amazon-items-collection-01-hybrid-search',
+            with_payload=True,
+            with_vectors=False,
+            scroll_filter=Filter(
+                must=[
+                    FieldCondition(key='parent_asin', match=MatchValue(value=reference.id))
+                ]
+            ),
+        )[0][0].payload
+
+        image_url = payload.get('image', '')
+        price = payload.get('price', None)
+        
+        if image_url:
+            used_context.append({
+                'image_url': image_url,
+                'price': price,
+                'description': reference.description,
+            })
+        
+    return {
+        'answer': result['answer'],
+        'used_context': used_context,
+    }
