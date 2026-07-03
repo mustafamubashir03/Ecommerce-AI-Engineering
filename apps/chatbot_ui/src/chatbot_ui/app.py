@@ -3,6 +3,12 @@ import streamlit as st
 from chatbot_ui.core.config import config
 import requests
 
+st.set_page_config(
+    page_title="Ecommerce Assistant",
+    layout="wide",
+    initial_sidebar_state="expanded",
+)
+
 def api_call(method, url, **kwargs):
 
     def _show_error_popup(message):
@@ -36,10 +42,26 @@ def api_call(method, url, **kwargs):
 if "messages" not in st.session_state:
     st.session_state.messages = [{'role': 'assistant', 'content': 'How can I assist you today?'}]
 
+if "used_context" not in st.session_state:
+    st.session_state.used_context = []
+
 #Display the messages
 for message in st.session_state.messages:
     with st.chat_message(message["role"]):
         st.markdown(message["content"])
+
+with st.sidebar:
+    suggestions_tab, = st.tabs(["Suggestions"])
+    with suggestions_tab:
+        if st.session_state.used_context:
+            for idx, item in enumerate(st.session_state.used_context):
+                st.caption(item.get('description', 'No Description'))
+                if 'image_url' in item:
+                    st.image(item['image_url'], width=250)
+                st.caption(f"Price: {item['price']} USD")
+                st.divider()
+        else:
+            st.info("No suggestions yet")
 
 if prompt := st.chat_input("Hi, how can I assist you today?"):
     st.session_state.messages.append({"role": "user", "content": prompt})
@@ -47,10 +69,12 @@ if prompt := st.chat_input("Hi, how can I assist you today?"):
         st.markdown(prompt)
 
     with st.chat_message("assistant"):
-        output = api_call('post', f'{config.API_URL}/rag', json={'query': prompt})
-        response = output[1]
-        answer = response['answer']
+        state, output = api_call('post', f'{config.API_URL}/rag', json={'query': prompt})
+        answer = output['answer']
+        used_context = output['used_context']
+        st.session_state.used_context = used_context
         st.write(answer)
     st.session_state.messages.append({"role": "assistant", "content": answer})
+    st.rerun()
 
 

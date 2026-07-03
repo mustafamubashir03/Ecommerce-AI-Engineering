@@ -18,5 +18,9 @@ This repo is dedicated to including all the practical exercises done during the 
 - Implement a RAG pipeline with observability
 - RAG pipeline evaluation
 
+## Week 2
+- Hybrid Vector Search
+- Prompt Management with YAML, Jinja and LangSmith Prompt Registry
+
 ## Contact me:
 - [LinkedIn](https://www.linkedin.com/in/pedrocrespo94/)
