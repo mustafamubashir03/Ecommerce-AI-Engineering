@@ -7,6 +7,7 @@ from qdrant_client.models import Filter, FieldCondition, MatchValue
 from qdrant_client.models import Prefetch, Document
 from qdrant_client import models
 from api.agents.utils.prompt_management import prompt_template_config
+import cohere
 
 qdrant_client = QdrantClient(url='http://qdrant:6333')
 
@@ -141,10 +142,45 @@ def generate_answer(prompt):
     return response
 
 @traceable(
+    name='rerank_data',
+    run_type='tool'
+)
+def rerank_data(query, context, top_k=5):
+    cohere_client = cohere.ClientV2()
+
+    response = cohere_client.rerank(
+        model='rerank-v4.0-pro',
+        query=query,
+        documents=context['retrieved_context_texts'],
+        top_n=top_k
+    )
+
+    order = [result.index for result in response.results]
+
+    return {
+        'retrieved_context_ids': [context['retrieved_context_ids'][i] for i in order],
+        'retrieved_context_texts': [context['retrieved_context_texts'][i] for i in order],
+        'similarity_scores': [context['retrieved_context_scores'][i] for i in order],
+        'retrieved_context_ratings': [context['retrieved_context_ratings'][i] for i in order]
+    }
+
+@traceable(
     name='rag_pipeline',
 )
-def rag_pipeline(question, qdrant_client, topk=5):
-    retrieved_context = retrieve_data(query=question, qdrant_client=qdrant_client, k=topk)
+def rag_pipeline(question, qdrant_client, topk=5, rerank=False, retrieve_k=20):
+    retrieved_context = retrieve_data(
+        query=question, 
+        qdrant_client=qdrant_client, 
+        k=retrieve_k if rerank else topk
+    )
+
+    if rerank:
+        retrieved_context = rerank_data(
+            query=question,
+            context=retrieved_context,
+            top_k=topk
+        )
+
     formatted_context = process_context(retrieved_context)
     prompt = build_prompt(question, formatted_context)
     answer = generate_answer(prompt)
