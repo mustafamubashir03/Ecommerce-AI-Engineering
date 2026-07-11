@@ -22,5 +22,10 @@ This repo is dedicated to including all the practical exercises done during the 
 - Hybrid Vector Search
 - Prompt Management with YAML, Jinja and LangSmith Prompt Registry
 
+## Week 3
+- Query Rewriting
+- Tool using and ReAct Agent in LangGraph
+- Routing Pattern
+
 ## Contact me:
 - [LinkedIn](https://www.linkedin.com/in/pedrocrespo94/)
