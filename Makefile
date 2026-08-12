@@ -7,4 +7,13 @@ clean-notebook-outputs:
 
 run-eval-retriever:
 	uv sync
-	PYTHONPATH=${PWD}/apps/api:${PWD}/apps/api/src:$$PYTHONPATH:${PWD} uv run --env-file .env python -m evals.eval_retriever
+	uv run --env-file .env --with python-dotenv \
+		python -c "\
+import sys; \
+sys.path.insert(0, 'apps/api/src'); \
+sys.path.insert(0, 'apps/api'); \
+from evals.eval_retriever import run_evaluation; \
+run_evaluation()"
+
+
+uv run --env-file .env --with python-dotenv python -c "import sys; sys.path.insert(0, 'apps/api/src'); sys.path.insert(0, 'apps/api'); from evals.eval_retriever import run_evaluation; run_evaluation()"

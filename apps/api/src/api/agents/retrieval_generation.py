@@ -1,56 +1,68 @@
-import openai
-from qdrant_client import QdrantClient
-from langsmith import traceable, get_current_run_tree
+from qdrant_client.http.models import FusionQuery
+from qdrant_client.conversions.common_types import Document
+from qdrant_client.conversions.common_types import Prefetch
+from api.api.models import RAGGenerationResponse
 import instructor
-from pydantic import BaseModel, Field
-from qdrant_client.models import Filter, FieldCondition, MatchValue
-from qdrant_client.models import Prefetch, Document
-from qdrant_client import models
-from api.agents.utils.prompt_management import prompt_template_config
+from qdrant_client import QdrantClient
+import os
+import numpy as np
 import cohere
+from qdrant_client.models import FieldCondition,Filter,MatchValue
+from dotenv import load_dotenv
+import openai
+from langsmith import traceable, get_current_run_tree
+load_dotenv()
 
-qdrant_client = QdrantClient(url='http://qdrant:6333')
+qdrant_client = QdrantClient(url=os.getenv("QDRANT_URL", "http://localhost:6333"))
+co = cohere.ClientV2(api_key=os.getenv("COHERE_API_KEY"))
+# client = openai.OpenAI(
+#     api_key=os.environ.get("OPENAI_API_KEY")
+# )
+client = instructor.from_openai(openai.OpenAI(
+    base_url="https://api.cerebras.ai/v1",
+    api_key=os.environ.get("CEREBRAS_API_KEY")
+))
 
-class RAGUsedContext(BaseModel):
-    id: str = Field(description="The ID of the item used to answer the question")
-    description: str = Field(description="The description of the item used to answer the question")
-
-class RAGGenerationResponse(BaseModel):
-    answer: str = Field(description="The answer to the user's question")
-    references: list[RAGUsedContext] = Field(description="List of items used to answer the question")
 
 @traceable(
-    name='embed_query',
-    run_type='embedding',
-    metadata={
-        'ls_provider': 'openai',
-        'ls_model_name': 'text-embedding-3-small',
-    },
+    name="embed_query",
+    run_type="embedding",
+    metadata={"model":"embed-v4.0","input_type":"classification","output_dimension":1536,"embedding_types":["float"]}
 )
-def get_embedding(text, model='text-embedding-3-small'):
-    response = openai.embeddings.create(
-        model=model,
-        input=text,
+def generate_embedding(text):
+    response = co.embed(
+        model="embed-v4.0",
+        inputs=[
+            {
+                "content": [
+                    {
+                        "type": "text",
+                        "text": text
+                    }
+                ]
+            }
+        ],
+        input_type="classification",
+        output_dimension=1536,
+        embedding_types=["float"],
     )
-
     current_run = get_current_run_tree()
-    if current_run:
-        current_run.metadata['usage_metadata'] = {
-            'input_tokens': response.usage.prompt_tokens,
-            'total_tokens': response.usage.total_tokens,
+    if current_run and hasattr(response, "usage"):
+        current_run.metadata["usage_metadata"] = {
+            "input_tokens": response.usage.prompt_tokens,
+            "total_tokens": response.usage.total_tokens,
         }
-    
-    return response.data[0].embedding
+
+    return response.embeddings.float[0]
 
 @traceable(
-    name='retrieve_data',
-    run_type='retriever',
+    name="retrieving_data",
+    run_type="retriever"
 )
-def retrieve_data(query, qdrant_client, collection_name='amazon-items-collection-01-hybrid-search', k=5):
-    query_embedding = get_embedding(query)
-
+def retrieve_data(query,k=5):
+    query_embedding = generate_embedding(query)
     results = qdrant_client.query_points(
-        collection_name=collection_name,
+        collection_name="Amazon-items-collection-01-hybrid",
         prefetch=[
             Prefetch(
                 query=query_embedding,
@@ -66,165 +78,116 @@ def retrieve_data(query, qdrant_client, collection_name='amazon-items-collection
                 limit=20
             )
         ],
-        query=models.RrfQuery(rrf=models.Rrf(weights=[3,1])),
+        query=FusionQuery(fusion="rrf"),
         limit=k
     )
-
-    retrieved_context_ids = []
-    retrieved_context_scores = []
-    retrieved_context_texts = []
-    retrieved_context_ratings = []
+    retrieved_context_ids=[]
+    retrieved_context=[]
+    similarity_scores=[]
+    retrieved_context_ratings=[]
 
     for result in results.points:
         retrieved_context_ids.append(result.payload['parent_asin'])
-        retrieved_context_scores.append(result.score)
-        retrieved_context_texts.append(result.payload['processed_description'])
+        similarity_scores.append(result.score)
+        retrieved_context.append(result.payload['processed_description'])
         retrieved_context_ratings.append(result.payload['average_rating'])
-
     return {
-        'retrieved_context_ids': retrieved_context_ids,
-        'retrieved_context_scores': retrieved_context_scores,
-        'retrieved_context_texts': retrieved_context_texts,
-        'retrieved_context_ratings': retrieved_context_ratings
+        "retrieved_context_ids":retrieved_context_ids,
+        "retrieved_context":retrieved_context,
+        "similarity_scores":similarity_scores,
+        "retrieved_context_ratings":retrieved_context_ratings
+
     }
 
+
 @traceable(
-    name='format_retrieved_context',
-    run_type='prompt',
+    name="processing_context",
+    run_type="prompt"
 )
-def process_context(retrieve_context):
-    formatted_context = ''
-
-    for id, chunk, rating in zip(retrieve_context['retrieved_context_ids'], retrieve_context['retrieved_context_texts'], retrieve_context['retrieved_context_ratings']):
-        formatted_context += f"- Product ID: {id}, Product Rating: {rating}, Product Description: {chunk}\n"
-
+def process_context(context):
+    formatted_context=""
+    for id,chunk,rating in zip(context["retrieved_context_ids"],context["retrieved_context"],context["retrieved_context_ratings"]):
+        formatted_context += f"-ID: {id}, rating: {rating}, context:{chunk}\n"
     return formatted_context
 
 @traceable(
-    name='build_prompt',
-    run_type='prompt',
+    name="building_prompt",
+    run_type="prompt"
 )
-def build_prompt(question, formatted_context):
-    template = prompt_template_config('api/agents/prompts/retrieval_generation.yml', 'retrieval_generation')
-    prompt = template.render(formatted_context=formatted_context, question=question)
+def build_prompt(preprocessed_data,question):
+    prompt = f"""
+    You are a shopping assistant that can answer questions about the products in stock.
+    You will be given a question and a list of context.
+
+    Instructions:
+    - You need to answer the question based on the provided context only.
+    - Never use the word context and refer to it as the available products.
+
+    Context:{preprocessed_data}
+
+    Question:{question}
+     """
     return prompt
 
 @traceable(
-    name='generate_answer',
-    run_type='llm',
-    metadata={
-        'ls_provider': 'openai',
-        'ls_model_name': 'gpt-5.4-nano',
-    },
+    name="generating_answer",
+    run_type="llm"
 )
 def generate_answer(prompt):
-    client = instructor.from_provider(
-        "openai/gpt-5.4-nano",
-        mode=instructor.Mode.RESPONSES_TOOLS
-    )
 
-    response, raw_response = client.create_with_completion(
-        messages=[
-            {"role": "system", "content": prompt}
-        ],
-        reasoning={'effort': 'none'},
-        response_model=RAGGenerationResponse
-    )
-
+    response, raw_response = client.chat.completions.create_with_completion(
+    model="gpt-oss-120b",
+    messages=[{"role":"system", "content":prompt}],
+    response_model=RAGGenerationResponse
+)
     current_run = get_current_run_tree()
     if current_run:
-        current_run.metadata['usage_metadata'] = {
-            'input_tokens': raw_response.usage.input_tokens,
-            'output_tokens': raw_response.usage.output_tokens,
-            'total_tokens': raw_response.usage.total_tokens,
+        current_run.metadata["usage_metadata"] = {
+            "input_tokens":raw_response.usage.prompt_tokens,
+            "output_tokens":raw_response.usage.completion_tokens,
+            "total_tokens":raw_response.usage.total_tokens
         }
-
     return response
 
+
 @traceable(
-    name='rerank_data',
-    run_type='tool'
+    name="rag_pipeline"
 )
-def rerank_data(query, context, top_k=5):
-    cohere_client = cohere.ClientV2()
-
-    response = cohere_client.rerank(
-        model='rerank-v4.0-pro',
-        query=query,
-        documents=context['retrieved_context_texts'],
-        top_n=top_k
-    )
-
-    order = [result.index for result in response.results]
-
+def rag_pipeline(query,top_k=5):
+    retrieved_data = retrieve_data(query,top_k)
+    preprocessed_data = process_context(retrieved_data)
+    prompt = build_prompt(preprocessed_data,query)
+    response = generate_answer(prompt)
     return {
-        'retrieved_context_ids': [context['retrieved_context_ids'][i] for i in order],
-        'retrieved_context_texts': [context['retrieved_context_texts'][i] for i in order],
-        'similarity_scores': [context['retrieved_context_scores'][i] for i in order],
-        'retrieved_context_ratings': [context['retrieved_context_ratings'][i] for i in order]
+        "datamodel":response,
+        "references":response.references,
+        "question":query,
+        "answer":response.answer,
+        "context_ids":retrieved_data["retrieved_context_ids"],
+        "retrieved_context":retrieved_data["retrieved_context"],
+        "score":retrieved_data["similarity_scores"],
+        "rating":retrieved_data["retrieved_context_ratings"]
     }
 
-@traceable(
-    name='rag_pipeline',
-)
-def rag_pipeline(question, qdrant_client, topk=5, rerank=False, retrieve_k=20):
-    retrieved_context = retrieve_data(
-        query=question, 
-        qdrant_client=qdrant_client, 
-        k=retrieve_k if rerank else topk
-    )
 
-    if rerank:
-        retrieved_context = rerank_data(
-            query=question,
-            context=retrieved_context,
-            top_k=topk
-        )
-
-    formatted_context = process_context(retrieved_context)
-    prompt = build_prompt(question, formatted_context)
-    answer = generate_answer(prompt)
-    
-    final_answer = {
-        'answer': answer.answer,
-        'references': answer.references,
-        'question': question,
-        'retrieved_context_ids': retrieved_context['retrieved_context_ids'],
-        'retrieved_context_texts': retrieved_context['retrieved_context_texts'],
-    }
-
-    return final_answer
-
-def rag_pipeline_wrapper(question, topk=5):
-    qdrant_client = QdrantClient(url='http://qdrant:6333')
-
-    result = rag_pipeline(question, qdrant_client, topk)
-
+def rag_pipeline_wrapper(question,top_k=5):
+    result = rag_pipeline(question,top_k=5)
     used_context = []
-
-    for reference in result.get('references', []):
-        payload = qdrant_client.scroll(
-            collection_name='amazon-items-collection-01-hybrid-search',
-            with_payload=True,
-            with_vectors=False,
-            scroll_filter=Filter(
-                must=[
-                    FieldCondition(key='parent_asin', match=MatchValue(value=reference.id))
-                ]
-            ),
-        )[0][0].payload
-
-        image_url = payload.get('image', '')
-        price = payload.get('price', None)
-        
+    dummy_vector = np.zeros(1536).tolist()
+    for item in result.get("references",[]):
+        payload = qdrant_client.query_points(collection_name="Amazon-items-collection-01-hybrid",with_payload=True,query=dummy_vector,limit=1,query_filter=Filter(must=[FieldCondition(key="parent_asin",match=MatchValue(value=item.id))])).points[0].payload
+        image_url = payload.get("image")
+        price = payload.get("price")
         if image_url:
             used_context.append({
-                'image_url': image_url,
-                'price': price,
-                'description': reference.description,
+                "id": item.id,
+                "image_url":image_url,
+                "price":price,
+                "description":item.description
             })
-        
     return {
-        'answer': result['answer'],
-        'used_context': used_context,
+        "answer": result["answer"],
+        "used_context":used_context
     }
+
+    
