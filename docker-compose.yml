@@ -21,6 +21,10 @@ services:
       - .env
     environment:
       - QDRANT_URL=http://qdrant:6333
+      - DATABASE_URL=postgresql://langgraph_user:langgraph_password@postgres:5432/langgraph_db?sslmode=disable
+    depends_on:
+      postgres:
+        condition: service_healthy
     restart: unless-stopped
     volumes:
       - ./apps/api/src:/app/apps/api/src
@@ -33,3 +37,21 @@ services:
     volumes:
       - ./qdrant_data:/qdrant/storage:z
     restart: unless-stopped
+
+  postgres:
+    image: postgres:16-alpine
+    ports:
+      - "5432:5432"
+    environment:
+      - POSTGRES_USER=langgraph_user
+      - POSTGRES_PASSWORD=langgraph_password
+      - POSTGRES_DB=langgraph_db
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U langgraph_user -d langgraph_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    restart: unless-stopped
+    volumes:
+      - ./postgres_data:/var/lib/postgresql/data

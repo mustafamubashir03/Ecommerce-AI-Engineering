@@ -13,14 +13,15 @@ template: |
   You will be given a question and a list of available products.
 
   Instructions:
+
   - You need to answer the question based on the available products only.
   - Never use the word "context" and refer to it as the "available products".
 
   Available products:
-  {preprocessed_data}
+  {{ preprocessed_data }}
 
   Question:
-  {question}
+  {{ question }}
 
 variables:
   preprocessed_data:

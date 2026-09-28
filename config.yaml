@@ -1,0 +1,160 @@
+# Every changeable value in the project lives here.
+# Secrets stay in .env; this file only names the env var to read them from.
+# Switch provider or model by editing `llm.active` and `llm.pool`, or by setting
+# the env var those values refer to - no code changes either way.
+
+llm:
+  # The only provider the agents talk to, so every error comes from it.
+  active: openrouter
+
+  temperature: 0
+  # Written in seconds. The OpenRouter integration takes milliseconds, so the
+  # conversion happens once in build_chat_model and nowhere else.
+  timeout_seconds: 90
+  # The openrouter SDK behind this integration retries 408/409/429/5xx on its
+  # own, and on a rate limited key every retry costs another daily request.
+  # 0 disables that; llm.py owns the retry policy instead, which backs off
+  # exponential and never retries a request the provider already refused.
+  max_retries: 0
+  # Free tiers reject very large max_tokens, so keep this bounded.
+  max_tokens: 2048
+
+  # Bounded retry for failures that a later attempt can actually fix.
+  retries:
+    attempts: 2
+    backoff_seconds: 0.5
+    backoff_cap_seconds: 8
+
+  # Ordered pool of OpenRouter model ids, tried one after another.
+  #
+  # Only availability failures move to the next model: a 429 that is not the
+  # account quota, 5xx, timeouts and connection errors. Authentication errors
+  # and our own bad requests stop immediately, and an exhausted account quota
+  # stops immediately because no model can answer it.
+  #
+  # Every id below was verified against https://openrouter.ai/api/v1/models as a
+  # free, text chat model with tool calling, which is what the agent needs.
+  # Override the whole list, or just the head of it, from .env.
+  pool: "${OPENROUTER_MODELS:-poolside/laguna-s-2.1:free,nvidia/nemotron-3-super-120b-a12b:free,thinkingmachines/inkling:free,nvidia/nemotron-3-ultra-550b-a55b:free,qwen/qwen3.8-27b:free,google/gemma-4-31b-it:free,nvidia/nemotron-3.5-lightning:free,google/gemma-4-26b-a4b-it:free,thinkingmachines/inkling-small:free,poolside/laguna-xs-2.1:free,dots-studio/dots-3-note-preview:free,liquid/lfm-2.5-2.6b:free}"
+
+  # Optional. When set and present in the pool it is tried first.
+  primary_model: "${OPENROUTER_PRIMARY_MODEL:-poolside/laguna-s-2.1:free}"
+
+  # The prefix init_chat_model needs. Each id from the pool is sent to
+  # OpenRouter as the request's `model` field.
+  model_prefix: openrouter
+
+  # Optional per provider overrides. base_url only for OpenAI compatible gateways.
+  base_urls:
+    openrouter: https://openrouter.ai/api/v1
+
+  # Provider key auto-detection order, used when active is "auto".
+  auto_detect: [openrouter]
+
+  # Which env var holds each provider's key, in the same order as auto_detect.
+  key_envs:
+    openrouter: OPENROUTER_API_KEY
+
+  # External provider fallback, a different provider rather than another
+  # OpenRouter model. It is only asked once the OpenRouter pool cannot answer,
+  # and never falls back to OpenRouter again.
+  google:
+    enabled: true
+    # Verified against the API for this key. The reference project's
+    # gemini-2.5-flash is retired for new users (HTTP 404), and 3.8/3.7 answer
+    # 503 under current demand, so 3.6 is the one that serves.
+    model: "${GOOGLE_MODEL:-gemini-3.6-flash}"
+    api_key_env: GOOGLE_API_KEY
+    # Seconds. This integration reads the value as seconds, so it needs no
+    # conversion; the OpenRouter integration above is the one in milliseconds.
+    timeout_seconds: 90
+
+  # Groq's own OpenAI compatible endpoint. Nothing is ever sent to
+  # api.openai.com for these models.
+  groq:
+    enabled: true
+    base_url: https://api.groq.com/openai/v1
+    api_key_env: GROQ_API_KEY
+    models: "${GROQ_MODELS:-openai/gpt-oss-120b,openai/gpt-oss-20b,qwen/qwen3.8-27b}"
+    primary_model: "${GROQ_MODEL:-openai/gpt-oss-120b}"
+    timeout_seconds: 60
+    # Groq documents strict JSON Schema for exactly these models, and documents
+    # that structured outputs cannot be combined with streaming or tool use.
+    # A strict request is therefore only ever sent to one of these.
+    strict_structured_output:
+      - openai/gpt-oss-20b
+      - openai/gpt-oss-120b
+      - qwen/qwen3.8-27b
+
+  # Providers tried, in order, once the OpenRouter pool cannot answer. Flat and
+  # bounded: each provider is asked once, and nothing routes back.
+  fallback_order: [groq, google]
+
+retrieval:
+  collection: Amazon-items-collection-01-hybrid
+  top_k: 5
+  max_top_k: 10
+  fusion: rrf
+  prefetch_limit: 20
+
+  # Qdrant named vectors for the hybrid search.
+  dense_vector: text-embedding-3-small
+  sparse_vector: bm25
+  sparse_model: qdrant/bm25
+
+  # Payload fields read back for the product cards.
+  fields:
+    id: parent_asin
+    image: image
+    price: price
+    rating: average_rating
+    description: processed_description
+
+embedding:
+  api_key_env: COHERE_API_KEY
+  model: embed-v4.0
+  input_type: classification
+  dimensions: 1536
+  embedding_types: [float]
+
+storage:
+  qdrant_url_env: QDRANT_URL
+  qdrant_url_default: http://localhost:6333
+  database_url_env: DATABASE_URL
+
+api:
+  cors_origins:
+    - http://localhost:5173
+    - http://localhost:3000
+    - http://127.0.0.1:5173
+    - http://127.0.0.1:3000
+  cors_allow_credentials: true
+
+agent:
+  max_iterations: 12
+  follow_up_chip_limit: 3
+
+  prompts:
+    intent_router: |
+      You are part of a shopping assistant that can answer questions about products in stock.
+      Instructions:
+      - Classify the question as relevant or not relevant.
+      - If it is not relevant, return False in "question_relevancy" and set "answer" to why.
+      - If it is relevant, return True in "question_relevancy" and set "answer" to "".
+      - You only answer questions about the products in stock.
+
+    shopping_agent: |
+      You are a shopping assistant that answers questions about the products that are currently in stock.
+      Instructions:
+      - Always call the `retrieve_data_tool` tool before answering anything about products, prices, ratings or availability.
+      - You may call the tool several times, with a broader or a more specific wording, until the available products answer the question.
+      - Answer only from what the tool returned, never from memory. If the products do not cover the question, say so.
+      - Never use the word context, refer to it as the available products.
+      - Quote the id of every product you use inline, like this: [B0ABC12345].
+      - Give a detailed answer with the relevant specifications as bullet points.
+
+  tool_docs:
+    retrieve_data_tool: |
+      Search the catalogue of products that are currently in stock.
+      Use this tool before answering any question about products, prices, ratings or availability.
+      It performs a hybrid keyword + semantic search.

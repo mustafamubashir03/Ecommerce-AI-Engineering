@@ -45,6 +45,9 @@ if "messages" not in st.session_state:
 if "used_context" not in st.session_state:
     st.session_state.used_context = []
 
+if "thread_id" not in st.session_state:
+    st.session_state.thread_id = None
+
 #Display the messages
 for message in st.session_state.messages:
     with st.chat_message(message["role"]):
@@ -58,7 +61,8 @@ with st.sidebar:
                 st.caption(item.get('description', 'No Description'))
                 if 'image_url' in item:
                     st.image(item['image_url'], width=250)
-                st.caption(f"Price: {item['price']} USD")
+                price = item.get('price')
+                st.caption(f"Price: {price} USD" if price is not None else "Price: unavailable")
                 st.divider()
         else:
             st.info("No suggestions yet")
@@ -69,11 +73,16 @@ if prompt := st.chat_input("Hi, how can I assist you today?"):
         st.markdown(prompt)
 
     with st.chat_message("assistant"):
-        state, output = api_call('post', f'{config.API_URL}/agent', json={'query': prompt})
-        answer = output['answer']
-        used_context = output['used_context']
-        st.session_state.used_context = used_context
-        st.write(answer)
+        ok, output = api_call('post', f'{config.API_URL}/agent', json={'query': prompt, 'thread_id': st.session_state.thread_id})
+        if ok:
+            answer = output.get('answer', '')
+            st.session_state.used_context = output.get('used_context', [])
+            st.session_state.thread_id = output.get('thread_id') or st.session_state.thread_id
+            st.write(answer)
+        else:
+            answer = output.get('message') or output.get('detail') or 'Something went wrong, please try again.'
+            st.session_state.used_context = []
+            st.error(answer)
     st.session_state.messages.append({"role": "assistant", "content": answer})
     st.rerun()
 

@@ -2,7 +2,7 @@ FROM ghcr.io/astral-sh/uv:python3.11-bookworm-slim
 
 WORKDIR /app
 
-COPY pyproject.toml uv.lock ./
+COPY pyproject.toml uv.lock config.yaml ./
 
 COPY apps/api ./apps/api/
 
@@ -28,4 +28,4 @@ EXPOSE 8000
 
 WORKDIR /app/apps/api/src
 
-CMD ["uvicorn", "api.app:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+CMD ["sh", "-c", "uvicorn api.app:app --host 0.0.0.0 --port ${API_PORT:-8000} --reload"]

@@ -7,15 +7,29 @@ requires-python = ">=3.11"
 dependencies = [
     "cohere>=7.0.5",
     "fastapi>=0.138.0",
-    "google-genai>=2.9.0",
-    "groq>=1.4.0",
     "instructor>=1.15.4",
+    "langchain>=1.3.0",
+    # langchain-core 1.6 broke create_agent's tool-calling branch (KeyError on the
+    # "model" node). Hold below that until it is fixed upstream.
+    "langchain-core>=1.4.8,<1.6",
+    # Required at runtime even though nothing imports it: langchain's
+    # init_chat_model does importlib.import_module("langchain_openrouter") to
+    # resolve the "openrouter:" prefix. It does not depend on langchain-openai.
+    "langchain-openrouter>=0.2.9",
+    # The OpenAI compatible client, pointed at Groq's base url. No Groq SDK:
+    # Groq speaks this protocol, so the same client serves it.
     "langchain-openai>=1.3.3",
+    # External provider fallback. This is the LangChain wrapper around the
+    # google-genai SDK, and it reads GOOGLE_API_KEY from the environment, which
+    # is the pattern the working reference project uses.
+    "langchain-google-genai>=2.1.0",
     "langgraph>=1.2.2",
+    "langgraph-checkpoint-postgres>=3.0.0",
     "langsmith>=0.9.3",
     "openai>=2.43.0",
+    "psycopg[binary,pool]>=3.2",
     "pydantic>=2.13.4",
-    "pydantic-settings>=2.14.2",
+    "pydantic-settings>=2.14.0",
     "pyyaml>=6.0.3",
     "qdrant-client>=1.18.0",
     "uvicorn>=0.49.0",
