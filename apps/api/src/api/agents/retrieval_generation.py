@@ -6,8 +6,6 @@ have to know which part of retrieval they are using. The parts themselves live
 in the `retrieval` package next to it.
 """
 
-from typing import List
-
 from api.agents.retrieval import (
     fetch_product_payloads,
     generate_embedding,

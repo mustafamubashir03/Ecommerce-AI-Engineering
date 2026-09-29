@@ -7,7 +7,7 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
 from api.agents.graph import run_agent, stream_agent
-from api.agents.provider_errors import ProviderError, describe
+from api.agents.errors import ProviderError, describe
 from api.agents.text import optional
 from api.api.models import RAGUsedContext
 from api.api.models import AgentRequest, RagRequest, RagResponse
@@ -64,11 +64,38 @@ async def agent_stream(request: Request, payload: AgentRequest) -> StreamingResp
     )
 
 
+def _user_message(failure: ProviderError) -> str:
+    """What the caller is told, without the provider's own words.
+
+    A real body can carry an account or organization id, the service tier and a
+    billing link, none of which belong in a response sent to a browser. The full
+    failure is logged instead, so the details are still available server side.
+    """
+    if failure.status == 413:
+        return (
+            "That question needs more tokens than this model allows in one "
+            "request. Please ask a shorter or more specific question."
+        )
+    if failure.status == 429:
+        return "The model provider is rate limiting requests right now. Please try again shortly."
+    if failure.status in (400, 422):
+        return "The model provider rejected the request. Please rephrase the question."
+    if failure.status in (401, 402, 403):
+        return "The model provider refused our access to this model. Please try again later."
+    if failure.status == 404:
+        return "This model is not available at the provider right now."
+    if failure.status is None:
+        return "The model provider could not be reached. Please try again."
+    if failure.status is not None and 500 <= failure.status < 600:
+        return "The model provider is temporarily unavailable. Please try again."
+    return "The assistant could not complete this request."
+
+
 def _as_http_error(error: Exception) -> HTTPException:
-    """Surface the provider's real status and body, never a summary of our own."""
+    """Surface the provider's real status, with a message written for the caller."""
     failure = describe(error)
-    logger.error("request %s failed: %s", getattr(error, "request_id", "-"), failure)
-    detail = {"error": str(failure)}
+    logger.error("request failed, provider said: %s", failure)
+    detail = {"error": _user_message(failure)}
     if failure.status in PROVIDER_STATUS:
         return HTTPException(status_code=failure.status, detail=detail)
     if isinstance(error, ProviderError):
@@ -92,7 +119,6 @@ async def _events(request: Request, payload: AgentRequest):
     loop = asyncio.get_running_loop()
     queue: asyncio.Queue = asyncio.Queue()
     finished = object()
-    request_id = request.state.request_id
 
     def produce() -> None:
         delivered = False
@@ -112,10 +138,14 @@ async def _events(request: Request, payload: AgentRequest):
                 # banner, so the stream is closed cleanly instead.
                 logger.warning("stream failed after the result was sent: %s", failure)
             else:
-                logger.error("stream failed: %s", failure)
+                logger.error("stream failed, provider said: %s", failure)
                 loop.call_soon_threadsafe(
                     queue.put_nowait,
-                    {"type": "error", "message": str(failure), "status": failure.status},
+                    {
+                        "type": "error",
+                        "message": _user_message(failure),
+                        "status": failure.status,
+                    },
                 )
         finally:
             loop.call_soon_threadsafe(queue.put_nowait, finished)

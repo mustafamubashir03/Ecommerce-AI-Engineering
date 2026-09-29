@@ -1,4 +1,3 @@
-from ast import Try
 import streamlit as st
 from chatbot_ui.core.config import config
 import requests
@@ -10,34 +9,20 @@ st.set_page_config(
 )
 
 def api_call(method, url, **kwargs):
-
-    def _show_error_popup(message):
-        st.session_state['error_popup'] = {
-            "visible": True,
-            "message": message,
-        }
-    
+    """Call the API, returning (ok, payload). Failures become a message."""
     try:
         response = getattr(requests, method)(url, **kwargs)
-        
-        try:
-            response_data = response.json()
-        except requests.exceptions.JSONDecodeError:
-            response_data = {'message':'Invalid response format from server'}
-        
-        if response.ok:
-            return True, response_data
-        
-        return False, response_data
     except requests.exceptions.ConnectionError:
-        _show_error_popup('Failed to connect to the server')
-        return False, {'message':'Failed to connect to the server'}
+        return False, {'message': 'Failed to connect to the server'}
     except requests.exceptions.Timeout:
-        _show_error_popup('Request timed out')
-        return False, {'message':'Request timed out'}
-    except Exception as e:
-        _show_error_popup(f'An error occurred: {e}')
-        return False, {'message':f'An error occurred: {e}'}
+        return False, {'message': 'Request timed out'}
+
+    try:
+        response_data = response.json()
+    except requests.exceptions.JSONDecodeError:
+        response_data = {'message': 'Invalid response format from server'}
+
+    return (True if response.ok else False), response_data
 
 if "messages" not in st.session_state:
     st.session_state.messages = [{'role': 'assistant', 'content': 'How can I assist you today?'}]

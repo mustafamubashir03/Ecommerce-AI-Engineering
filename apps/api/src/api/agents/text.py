@@ -1,24 +1,17 @@
-from typing import Any, List, Optional
+"""Reading text out of a conversation.
 
+`BaseMessage.text` already handles every shape a provider returns: a plain
+string, a list of content blocks, or nothing at all. These are the two
+reductions over a list of messages that it cannot do for us.
+"""
 
-def message_text(message: Any) -> str:
-    """Text of a single message, whatever shape the provider returned."""
-    content = getattr(message, "content", None)
-    if isinstance(content, str):
-        return content
-    if isinstance(content, list):
-        return "".join(
-            block.get("text", "")
-            for block in content
-            if isinstance(block, dict) and block.get("type") == "text"
-        )
-    return ""
+from typing import Any, List
 
 
 def last_message_text(messages: List[Any]) -> str:
     """Text of the final message that actually said something."""
     for message in reversed(messages or []):
-        text = message_text(message).strip()
+        text = message.text.strip()
         if text:
             return text
     return ""
@@ -29,11 +22,9 @@ def join_tool_output(messages: List[Any]) -> str:
     from langchain_core.messages import ToolMessage
 
     return "".join(
-        message_text(message)
-        for message in messages or []
-        if isinstance(message, ToolMessage)
+        message.text for message in messages or [] if isinstance(message, ToolMessage)
     )
 
 
-def optional(value: Optional[str], default: str = "") -> str:
+def optional(value: str | None, default: str = "") -> str:
     return value if value else default

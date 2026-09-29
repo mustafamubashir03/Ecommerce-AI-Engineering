@@ -62,8 +62,6 @@ def predict(inputs: dict) -> dict:
     log.info("Running RAG pipeline for query: %r", query)
 
     result = rag_pipeline(query)
-    print(result)
-    print(result.keys())
 
     log.info(
         "Retrieved %d docs — IDs: %s — scores: %s",
@@ -122,7 +120,6 @@ async def _ragas_context_recall_async(run, example) -> dict:
 # Sync wrappers — LangSmith evaluate() calls evaluators synchronously
 # ---------------------------------------------------------------------------
 def ragas_faithfulness(run, example) -> dict:
-    print(run.outputs)
     return asyncio.run(_ragas_faithfulness_async(run, example))
 
 

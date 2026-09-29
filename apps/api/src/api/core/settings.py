@@ -27,9 +27,7 @@ def _find_config() -> Path:
 
 
 class RetrySettings(BaseModel):
-    attempts: int = 2
     backoff_seconds: float = 0.5
-    backoff_cap_seconds: float = 8.0
 
 
 class GoogleSettings(BaseModel):
@@ -124,9 +122,7 @@ class APISettings(BaseModel):
 
 class AgentSettings(BaseModel):
     max_iterations: int = 12
-    follow_up_chip_limit: int = 3
     prompts: Dict[str, str]
-    tool_docs: Dict[str, str] = Field(default_factory=dict)
 
 
 class Settings(BaseModel):
@@ -211,11 +207,3 @@ def get_settings() -> Settings:
     load_env()
     with open(_find_config(), "r", encoding="utf-8-sig") as handle:
         return Settings(**_expand_env(yaml.safe_load(handle)))
-
-
-def setting(path: str, default: Any = None) -> Any:
-    """Read a dotted path, e.g. setting("retrieval.fields.id")."""
-    value: Any = get_settings()
-    for part in path.split("."):
-        value = value[part] if isinstance(value, dict) else getattr(value, part)
-    return value

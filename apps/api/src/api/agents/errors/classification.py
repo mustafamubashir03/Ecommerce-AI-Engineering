@@ -7,6 +7,7 @@ real body.
 
 import json
 import logging
+import re
 import time
 
 logger = logging.getLogger(__name__)
@@ -49,16 +50,81 @@ def _headers(error: BaseException) -> dict:
     return {}
 
 
+_STATUS_IN_TEXT = re.compile(
+    r"(?:code|status)\s*[:=]\s*(?P<status>[1-5]\d{2})\b|\bHTTP\s+(?P<http_status>[1-5]\d{2})\b",
+    re.IGNORECASE,
+)
+
+
+def status_from_text(text: str) -> int | None:
+    """The status a provider named in its own message, if it named one."""
+    match = _STATUS_IN_TEXT.search(text or "")
+    if not match:
+        return None
+    return int(match.group("status") or match.group("http_status"))
+
+
+def _status_code(value) -> int | None:
+    """An int status, from an int or a numeric string. Nothing else."""
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str) and value.strip().isdigit():
+        return int(value.strip())
+    return None
+
+
 def status_of(error: BaseException) -> int | None:
+    """The status of a failure: what the provider meant, not what the wire said.
+
+    Precedence matters, because a streamed answer opens its HTTP connection
+    successfully and then reports the failure inside the stream. The transport
+    status is then a plain 200 while the real status sits in the body, so:
+
+    1. a non-2xx error code the provider put in the body wins;
+    2. otherwise the transport status the exception carries;
+    3. otherwise a number the provider named in its own prose, for failures
+       raised mid-stream that carry no status attribute at all.
+
+    The body is read as JSON, never scanned for loose numbers, so a product id
+    or a price in a message cannot be mistaken for a status.
+    """
+    payload = _status_code(_error_object(error).get("code"))
+    if payload is not None and not 200 <= payload < 300:
+        return payload
+
     candidates = (
         getattr(error, "status_code", None),
         getattr(error, "status", None),
         getattr(getattr(error, "response", None), "status_code", None),
     )
     for candidate in candidates:
-        if isinstance(candidate, int):
-            return candidate
-    return None
+        found = _status_code(candidate)
+        if found is not None:
+            return found
+    return status_from_text(str(error))
+
+
+def is_routing_restriction(error: BaseException) -> bool:
+    """True when a 403 is OpenRouter refusing the route, not the credentials.
+
+    OpenRouter gates some free models behind an agentic harness and says so
+    with a routing field rather than an authentication message:
+
+        "metadata": {"failed_routing_step": "Gate Free Endpoints by Agentic
+        Harness", "routing_funnel": [...]}
+
+    That rejection is about this one model, so the next one is worth trying. A
+    403 without that field is treated as a real authorisation failure, so this
+    only ever narrows the rule in one direction and never widens it.
+    """
+    if status_of(error) != 403:
+        return False
+    metadata = _error_object(error).get("metadata")
+    if not isinstance(metadata, dict):
+        return False
+    return bool(str(metadata.get("failed_routing_step") or "").strip())
 
 
 def body_of(error: BaseException) -> str:
@@ -158,6 +224,10 @@ def is_fallback_worthy(error: BaseException) -> bool:
     status = status_of(error)
     if status is None:
         return False
+    if status == 403 and is_routing_restriction(error):
+        # The provider refused this one route, not the key, so the next model
+        # is worth trying. A 403 without that evidence still stops the walk.
+        return True
     if status in NEVER_RETRY_STATUS:
         # A bad request, a bad key or a missing model fails the same way on
         # every model, so rotating hides the real cause instead of fixing it.

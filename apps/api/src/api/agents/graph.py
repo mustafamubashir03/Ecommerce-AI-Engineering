@@ -9,7 +9,6 @@ from langgraph.graph.message import add_messages
 from api.agents.checkpointer import get_checkpointer
 from api.agents.router import intent_router_condition_edges, intent_router_node
 from api.agents.shopping_agent import agent_node
-from api.agents.text import message_text
 
 EMPTY_ANSWER = "Please ask a question about the products in stock."
 
@@ -86,7 +85,7 @@ def stream_agent(query: str, thread_id: str = None) -> Iterator[dict]:
             # forwarding those would print the whole catalogue into the chat.
             if getattr(token, "type", None) != "ai":
                 continue
-            text = message_text(token)
+            text = token.text
             if text:
                 yield {"type": "token", "text": text}
         elif mode == "values" and chunk.get("answer") and not result_sent:

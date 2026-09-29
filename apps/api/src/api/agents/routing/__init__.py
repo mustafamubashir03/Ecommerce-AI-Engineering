@@ -24,7 +24,7 @@ from api.agents.routing.streaming import astream, stream
 from api.agents.routing.structured import RoutedStructuredOutput
 from api.agents.routing.walker import (
     NO_MODEL_MESSAGE,
-    FailureWalk,
+    after_failure,
     first_success,
     first_success_async,
 )
@@ -35,7 +35,7 @@ __all__ = [
     "PRIMARY",
     "RAISE",
     "ROTATE",
-    "FailureWalk",
+    "after_failure",
     "ProviderPlan",
     "RoutedStructuredOutput",
     "Step",

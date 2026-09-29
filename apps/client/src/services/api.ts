@@ -12,35 +12,6 @@ export class ApiError extends Error {
   }
 }
 
-async function post<T>(path: string, body: unknown, signal?: AbortSignal): Promise<T> {
-  const response = await fetch(`${API_BASE_URL}${path}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-    signal,
-  });
-
-  if (!response.ok) {
-    const detail = await response.text().catch(() => "");
-    throw new ApiError(
-      `The assistant returned ${response.status}. ${detail.slice(0, 200)}`.trim(),
-      response.status
-    );
-  }
-
-  return (await response.json()) as T;
-}
-
-/** Blocking turn, used by callers that want the whole answer at once. */
-export function askAgent(query: string, threadId: string | null, signal?: AbortSignal) {
-  return post<RagResponse>("/agent/", { query, thread_id: threadId ?? undefined }, signal);
-}
-
-/** Retrieval only, no agent turn. */
-export function askRag(query: string, signal?: AbortSignal) {
-  return post<RagResponse>("/rag/", { query }, signal);
-}
-
 export async function checkApiHealth(signal?: AbortSignal): Promise<boolean> {
   try {
     const response = await fetch(`${API_BASE_URL}/docs`, { signal });

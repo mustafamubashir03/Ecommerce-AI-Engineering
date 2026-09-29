@@ -13,7 +13,7 @@ of being retried somewhere that cannot do any better.
 
 from typing import TYPE_CHECKING, List
 
-from api.agents.provider_errors import is_account_quota, is_fallback_worthy, wait_for
+from api.agents.errors import is_account_quota, is_fallback_worthy, wait_for
 from api.core.settings import get_settings
 
 if TYPE_CHECKING:  # pragma: no cover - import cycle only matters for typing

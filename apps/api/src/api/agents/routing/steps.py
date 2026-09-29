@@ -9,7 +9,7 @@ from typing import Any, Callable, List, NamedTuple, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from api.agents.provider_errors import hold_error, is_account_quota, is_fallback_worthy
+from api.agents.errors import hold_error, is_account_quota, is_fallback_worthy
 from api.agents.routing.policy import PRIMARY
 
 

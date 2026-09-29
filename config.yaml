@@ -19,11 +19,10 @@ llm:
   # Free tiers reject very large max_tokens, so keep this bounded.
   max_tokens: 2048
 
-  # Bounded retry for failures that a later attempt can actually fix.
+  # How long to hold a provider off after it refuses. The rotation itself is
+  # flat and bounded, so this is the only retry-related value there is.
   retries:
-    attempts: 2
     backoff_seconds: 0.5
-    backoff_cap_seconds: 8
 
   # Ordered pool of OpenRouter model ids, tried one after another.
   #
@@ -132,7 +131,6 @@ api:
 
 agent:
   max_iterations: 12
-  follow_up_chip_limit: 3
 
   prompts:
     intent_router: |
@@ -152,9 +150,3 @@ agent:
       - Never use the word context, refer to it as the available products.
       - Quote the id of every product you use inline, like this: [B0ABC12345].
       - Give a detailed answer with the relevant specifications as bullet points.
-
-  tool_docs:
-    retrieve_data_tool: |
-      Search the catalogue of products that are currently in stock.
-      Use this tool before answering any question about products, prices, ratings or availability.
-      It performs a hybrid keyword + semantic search.

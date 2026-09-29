@@ -20,15 +20,13 @@ from api.agents.errors.classification import (
     describe,
     is_account_quota,
     is_fallback_worthy,
+    is_routing_restriction,
     status_of,
     wait_for,
 )
 from api.agents.errors.cooldown import (
-    claim_failure_walk,
     hold_error,
     record_pool_failure,
-    release_failure_walk,
-    share_failure,
     trip,
 )
 
@@ -38,14 +36,12 @@ __all__ = [
     "RETRYABLE_STATUS",
     "ProviderError",
     "body_of",
-    "claim_failure_walk",
     "describe",
     "hold_error",
     "is_account_quota",
     "is_fallback_worthy",
+    "is_routing_restriction",
     "record_pool_failure",
-    "release_failure_walk",
-    "share_failure",
     "status_of",
     "trip",
     "wait_for",

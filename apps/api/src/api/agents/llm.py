@@ -26,20 +26,6 @@ _cache: dict = {}
 # --- the pool's provider ----------------------------------------------------
 
 
-def active_provider() -> str:
-    """Configured provider, or the first one with a key present."""
-    return openrouter.active_provider()
-
-
-def model_prefix() -> str:
-    """The `init_chat_model` prefix, e.g. `openrouter`, from config.yaml."""
-    return openrouter.model_prefix()
-
-
-def _client_options(provider: str, temperature: float | None) -> dict:
-    return openrouter.client_options(provider, temperature)
-
-
 def build_chat_model(
     model_id: str,
     provider: str = None,
@@ -105,7 +91,7 @@ def get_chat_model(provider: str = None, temperature: float = None) -> BaseChatM
     """
     from api.agents.model_router import RoutedChatModel
 
-    provider = provider or active_provider()
+    provider = provider or openrouter.active_provider()
     settings = get_settings().llm
     temperature = settings.temperature if temperature is None else temperature
 
@@ -115,7 +101,7 @@ def get_chat_model(provider: str = None, temperature: float = None) -> BaseChatM
 
     model = RoutedChatModel(
         models=get_settings().model_pool(),
-        options=_client_options(provider, temperature),
+        options=openrouter.client_options(provider, temperature),
         fallbacks=build_fallback_providers(),
     )
     _cache[cache_key] = model

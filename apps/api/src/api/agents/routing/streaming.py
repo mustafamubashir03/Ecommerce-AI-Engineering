@@ -13,7 +13,7 @@ from typing import Any, AsyncIterator, Iterator, List
 
 from langchain_core.outputs import ChatGenerationChunk
 
-from api.agents.provider_errors import describe, record_pool_failure, trip
+from api.agents.errors import describe, record_pool_failure, trip
 from api.agents.routing.policy import PRIMARY, RAISE, action, cooldown_wait
 from api.agents.routing.steps import Step
 

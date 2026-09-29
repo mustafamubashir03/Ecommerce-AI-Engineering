@@ -7,7 +7,6 @@ requires-python = ">=3.11"
 dependencies = [
     "cohere>=7.0.5",
     "fastapi>=0.138.0",
-    "instructor>=1.15.4",
     "langchain>=1.3.0",
     # langchain-core 1.6 broke create_agent's tool-calling branch (KeyError on the
     # "model" node). Hold below that until it is fixed upstream.
@@ -26,13 +25,17 @@ dependencies = [
     "langgraph>=1.2.2",
     "langgraph-checkpoint-postgres>=3.0.0",
     "langsmith>=0.9.3",
-    "openai>=2.43.0",
     "psycopg[binary,pool]>=3.2",
     "pydantic>=2.13.4",
-    "pydantic-settings>=2.14.0",
     "pyyaml>=6.0.3",
     "qdrant-client>=1.18.0",
     "uvicorn>=0.49.0",
+    # Imported directly, so declared rather than inherited. Both were only
+    # present because another package happened to pull them in, and vanished
+    # the moment that package was removed.
+    "python-dotenv>=1.0.0",
+    "jinja2>=3.1.0",
+    "starlette>=0.40.0",
 ]
 
 [build-system]
@@ -41,14 +44,4 @@ build-backend = "uv_build"
 
 [tool.uv.sources]
 shared = {workspace = true }
-
-[tool.hatch.build.targets.wheel]
-packages = ["src/api"]
-
-[tool.hatch.build.targets.sdist]
-include = [
-    "src/",
-    "tests/",
-    "README.md",
-]
 

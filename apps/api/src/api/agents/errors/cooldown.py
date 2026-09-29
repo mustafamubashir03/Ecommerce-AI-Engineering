@@ -1,13 +1,12 @@
 """Remembering a refusal, so the next turn costs no request.
 
-This is the process-wide state of the module: one stored refusal, and the lock
-that keeps a burst of requests from turning into one provider request per model
-per caller. The decisions about *whether* something is worth remembering are in
-`classification`; the order they are applied in is `routing.policy`.
+The point of this module is narrow: when a provider refuses a key rather than a
+model, every later request would otherwise pay to discover that again. One
+stored refusal, held for as long as the provider asked us to wait, means the
+rotation moves straight to the next provider.
 """
 
 import logging
-import threading
 import time
 
 from api.agents.errors.classification import ProviderError, describe
@@ -58,49 +57,6 @@ class _Cooldown:
 
 
 _cooldown = _Cooldown()
-
-_FAILURE_WALK = threading.Lock()
-_failure_walk_depth = 0
-
-
-def claim_failure_walk() -> bool:
-    """True for the request that gets to walk the pool after a failure.
-
-    The first request to see an availability failure does the walk. Anything
-    that arrives while that walk is in progress waits for its verdict instead of
-    starting its own, which is what stops a burst of requests from turning into
-    one provider request per model per caller.
-    """
-    global _failure_walk_depth
-    if _FAILURE_WALK.acquire(blocking=False):
-        _failure_walk_depth += 1
-        return True
-    return False
-
-
-def release_failure_walk() -> None:
-    global _failure_walk_depth
-    if _failure_walk_depth > 0:
-        _failure_walk_depth -= 1
-        _FAILURE_WALK.release()
-
-
-def _await_walk(done: threading.Event) -> None:
-    _FAILURE_WALK.acquire()
-    _FAILURE_WALK.release()
-    done.set()
-
-
-def share_failure(error: BaseException) -> ProviderError | None:
-    """Wait for the in-progress walk, then replay its answer if it found one."""
-    released = threading.Event()
-    holder = threading.Thread(target=_await_walk, args=(released,), daemon=True)
-    holder.start()
-    released.wait(timeout=STORM_GUARD_SECONDS)
-    stored = _cooldown.hold()
-    if stored is not None:
-        return stored
-    return trip(error, STORM_GUARD_SECONDS)
 
 
 def hold_error() -> ProviderError | None:
