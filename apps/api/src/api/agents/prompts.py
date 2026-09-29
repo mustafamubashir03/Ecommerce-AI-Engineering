@@ -1,9 +1,3 @@
-"""Prompt text and structured response models for the shopping assistant.
-
-The prompt wording itself lives in `config.yaml` under `agent.prompts` so it can
-be tuned without touching code.
-"""
-
 from pydantic import BaseModel, Field
 
 from api.core.settings import get_settings

@@ -24,7 +24,7 @@ from ragas.metrics.collections.faithfulness.metric import Faithfulness
 from ragas.metrics.collections.context_recall.metric import ContextRecall
 
 # api.agents is resolvable because PYTHONPATH includes apps/api/src (set in Makefile)
-from api.agents.retrieval_generation import rag_pipeline
+from api.agents.rag import rag_pipeline
 
 # ---------------------------------------------------------------------------
 # Bootstrap
@@ -51,7 +51,7 @@ ragas_llm = llm_factory("gpt-4o-mini", client=async_openai_client)
 # ---------------------------------------------------------------------------
 # Target function — called once per LangSmith example
 # ---------------------------------------------------------------------------
-# Production rag_pipeline (retrieval_generation.py) returns:
+# Production rag_pipeline (agents/rag.py) returns:
 #   { "answer", "question", "retrieved_context_ids", "retrieved_context",
 #     "similarity_scores", "retrieved_context_ratings" }
 # All keys match what the RAGAS evaluators expect — no aliasing needed.

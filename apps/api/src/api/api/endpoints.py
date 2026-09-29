@@ -8,10 +8,9 @@ from fastapi.responses import StreamingResponse
 
 from api.agents.graph import run_agent, stream_agent
 from api.agents.errors import ProviderError, describe
+from api.agents.rag import rag_pipeline_wrapper
 from api.agents.text import optional
-from api.api.models import RAGUsedContext
-from api.api.models import AgentRequest, RagRequest, RagResponse
-from api.agents.retrieval_generation import rag_pipeline_wrapper
+from api.models import AgentRequest, RAGUsedContext, RagRequest, RagResponse
 
 logging.basicConfig(
     level=logging.INFO,

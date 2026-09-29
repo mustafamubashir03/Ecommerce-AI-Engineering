@@ -80,17 +80,12 @@ def stream_agent(query: str, thread_id: str = None) -> Iterator[dict]:
     ):
         if mode == "messages":
             token, _metadata = chunk
-            # Only the assistant's own writing belongs in the chat bubble. The
-            # stream also carries the question and the raw tool output, and
-            # forwarding those would print the whole catalogue into the chat.
             if getattr(token, "type", None) != "ai":
                 continue
             text = token.text
             if text:
                 yield {"type": "token", "text": text}
         elif mode == "values" and chunk.get("answer") and not result_sent:
-            # `values` reports the whole state after every step, so a finished
-            # answer is reported more than once. One result per turn, then done.
             result_sent = True
             yield {
                 "type": "result",

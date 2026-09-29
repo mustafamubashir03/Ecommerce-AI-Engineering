@@ -12,7 +12,7 @@ from typing import Any, Dict, List
 
 import yaml
 from dotenv import load_dotenv
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 CONFIG_FILENAME = "config.yaml"
 
@@ -26,59 +26,19 @@ def _find_config() -> Path:
     raise FileNotFoundError(f"{CONFIG_FILENAME} not found above {__file__}")
 
 
-class RetrySettings(BaseModel):
-    backoff_seconds: float = 0.5
-
-
-class GoogleSettings(BaseModel):
-    """The external provider fallback, a different provider than the pool."""
-
-    enabled: bool = False
-    model: str = ""
-    api_key_env: str = "GOOGLE_API_KEY"
-    timeout_seconds: float = 90.0
-
-
-class GroqSettings(BaseModel):
-    """Groq's OpenAI compatible endpoint, with its own ordered model list."""
-
-    enabled: bool = False
-    base_url: str = "https://api.groq.com/openai/v1"
-    api_key_env: str = "GROQ_API_KEY"
-    models: str = ""
-    primary_model: str = ""
-    timeout_seconds: float = 60.0
-    strict_structured_output: List[str] = Field(default_factory=list)
-
-    def model_pool(self) -> List[str]:
-        """The configured ids, primary first, without duplicates."""
-        candidates = [item.strip() for item in (self.models or "").split(",") if item.strip()]
-        ordered: List[str] = []
-        primary = (self.primary_model or "").strip()
-        if primary:
-            ordered.append(primary)
-        for candidate in candidates:
-            if candidate not in ordered:
-                ordered.append(candidate)
-        return ordered
-
-
 class LLMSettings(BaseModel):
-    active: str = "auto"
+    """One OpenAI-compatible provider.
+
+    Every field here is a value a provider needs, so pointing this at another
+    OpenAI-compatible endpoint is a config edit and never a code edit.
+    """
+
+    model: str
+    base_url: str
+    api_key_env: str
     temperature: float = 0.0
-    timeout_seconds: float = 120.0
-    max_retries: int = 0
     max_tokens: int | None = 2048
-    retries: RetrySettings = Field(default_factory=RetrySettings)
-    pool: str = ""
-    primary_model: str = ""
-    model_prefix: str = ""
-    base_urls: Dict[str, str] = Field(default_factory=dict)
-    auto_detect: List[str] = Field(default_factory=list)
-    key_envs: Dict[str, str] = Field(default_factory=dict)
-    google: GoogleSettings = Field(default_factory=GoogleSettings)
-    groq: GroqSettings = Field(default_factory=GroqSettings)
-    fallback_order: List[str] = Field(default_factory=list)
+    timeout_seconds: float = 120.0
 
 
 class FieldNames(BaseModel):
@@ -141,37 +101,15 @@ class Settings(BaseModel):
     def database_url(self) -> str | None:
         return os.getenv(self.storage.database_url_env) or None
 
-    def provider_api_key_env(self, provider: str) -> str:
-        return self.llm.key_envs.get(provider, "")
-
-    def provider_api_key(self, provider: str) -> str:
-        env_name = self.provider_api_key_env(provider)
-        return (os.getenv(env_name) or "").strip() if env_name else ""
-
-    def model_pool(self) -> List[str]:
-        """The configured model ids, primary first, without duplicates.
-
-        Parsed once and reused: the router needs a stable order for the whole
-        process, not a fresh read per request.
-        """
-        separator = "," if "," in self.llm.pool else None
-        candidates = [item.strip() for item in (self.llm.pool or "").split(separator or None)]
-        ordered: List[str] = []
-
-        primary = (self.llm.primary_model or "").strip()
-        if primary:
-            ordered.append(primary)
-        for candidate in candidates:
-            if candidate and candidate not in ordered:
-                ordered.append(candidate)
-        return ordered
+    def provider_api_key(self, env_name: str) -> str:
+        return (os.getenv(env_name) or "").strip()
 
 
 def load_env() -> None:
     """Load .env, tolerating a UTF-8 BOM.
 
     Editors that write a BOM silently rename the first variable (it arrives as
-    '\\ufeffGOOGLE_API_KEY'), which makes that key invisible to the app. Reading
+    '\\ufeffOPENAI_API_KEY'), which makes that key invisible to the app. Reading
     with utf-8-sig drops the BOM instead.
     """
     load_dotenv(encoding="utf-8-sig")

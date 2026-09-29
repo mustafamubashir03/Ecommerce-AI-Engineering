@@ -1,54 +1,16 @@
-"""How the application reacts to a provider failure.
+"""How the application reads a provider failure.
 
-Split by what the code does:
+    `classification`  the real status, the real body, and both wrapped together
 
-    `classification`  read the failure: its status, its body, whether rotating
-                      could help, whether the limit is the account's
-    `cooldown`        remember it, so the next turn costs no request
-
-Nothing here invents an error message: the caller always sees the real HTTP
-status and the real response body, and a request the provider already refused is
-not sent again while the refusal is current.
+The endpoint logs that raw failure and sends the caller a message written for
+them, so a provider body never reaches a browser.
 """
 
 from api.agents.errors.classification import (
-    ACCOUNT_QUOTA_MARKERS,
-    CEILING_PERMANENT,
-    CEILING_TRANSIENT,
-    NEVER_RETRY_STATUS,
-    RETRYABLE_STATUS,
     ProviderError,
     body_of,
     describe,
-    is_account_quota,
-    is_fallback_worthy,
-    is_routing_restriction,
     status_of,
-    token_ceiling,
-    wait_for,
-)
-from api.agents.errors.cooldown import (
-    hold_error,
-    record_pool_failure,
-    trip,
 )
 
-__all__ = [
-    "ACCOUNT_QUOTA_MARKERS",
-    "CEILING_PERMANENT",
-    "CEILING_TRANSIENT",
-    "NEVER_RETRY_STATUS",
-    "RETRYABLE_STATUS",
-    "ProviderError",
-    "body_of",
-    "describe",
-    "hold_error",
-    "is_account_quota",
-    "is_fallback_worthy",
-    "is_routing_restriction",
-    "record_pool_failure",
-    "status_of",
-    "token_ceiling",
-    "trip",
-    "wait_for",
-]
+__all__ = ["ProviderError", "body_of", "describe", "status_of"]

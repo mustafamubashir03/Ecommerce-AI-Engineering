@@ -1,18 +1,16 @@
-"""Retrieval: the search, the prompt, and the answer built from them.
+"""The direct `/rag/` flow: retrieve, format, prompt, answer.
 
-The direct retrieval endpoint's pipeline, kept separate from the agent's tool so
-the two can change independently. `catalog` holds the Qdrant and embedding calls
-and `prompts` holds the template loading; this module is only the sequence:
-
-    retrieve  ->  format the context  ->  render the prompt  ->  answer
+The shopping assistant does not come through here. It retrieves with the same
+`retrieve_data` and hydrates with the same `hydrate_used_context`; this module is
+the no-agent path, where one retrieval pass and one prompt produce one answer.
 """
 
 from langsmith import traceable
 
 from api.agents.llm import get_chat_model
-from api.agents.retrieval.catalog import retrieve_data
-from api.agents.retrieval.prompts import render_prompt
-from api.api.models import RAGGenerationResponse
+from api.agents.prompts import render_prompt
+from api.agents.retrieval import hydrate_used_context, retrieve_data
+from api.models import RAGGenerationResponse
 
 
 @traceable(name="processing_context", run_type="prompt")
@@ -59,3 +57,13 @@ def rag_pipeline(query: str, top_k: int = 5) -> dict:
         "score": retrieved_data["similarity_scores"],
         "rating": retrieved_data["retrieved_context_ratings"],
     }
+
+
+@traceable(name="rag_pipeline_wrapper")
+def rag_pipeline_wrapper(question: str, top_k: int = 5) -> dict:
+    """The `/rag/` endpoint's shape: an answer plus the products behind it."""
+    result = rag_pipeline(question, top_k=top_k)
+    used_context = hydrate_used_context(
+        [(item.id, item.description) for item in result.get("references", [])]
+    )
+    return {"answer": result["answer"], "used_context": used_context}

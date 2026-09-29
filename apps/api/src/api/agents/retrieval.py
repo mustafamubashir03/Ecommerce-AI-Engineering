@@ -1,9 +1,16 @@
-"""The catalogue itself: embeddings, hybrid search, and stored product payloads.
+"""The catalogue: clients, embeddings, and the search itself.
 
-This is the only place that talks to Qdrant or to the embedding provider. What
-the rest of the application needs is deliberately narrow: `retrieve_data` for
-the search results, and `fetch_product_payloads` to turn a product id into the
-fields the UI shows.
+This is the only module that talks to Qdrant or to the embedding provider. Both
+clients are built once at import from `config.yaml` and the environment, so
+pointing either at a different host or a different key is a config edit:
+
+    qdrant_client = QdrantClient(url=...)                 from llm/storage config
+    co            = cohere.ClientV2(api_key=...)         COHERE_API_KEY
+
+Two searches live here. `retrieve_data` is the hybrid one the agent uses, dense
+vectors fused with BM25. `retrieve_data_dense` is the plain single-vector search,
+kept because it is what you reach for when you are checking whether the hybrid
+ranking is actually helping.
 """
 
 import os
@@ -21,14 +28,25 @@ _settings = get_settings()
 _retrieval = _settings.retrieval
 _fields = _retrieval.fields
 
+# Both clients are injected, never hardcoded: the url and the env var name of the
+# key both come from config.yaml.
 qdrant_client = QdrantClient(url=_settings.qdrant_url)
-_cohere = cohere.ClientV2(api_key=os.getenv(_settings.embedding.api_key_env))
+co = cohere.ClientV2(api_key=os.getenv(_settings.embedding.api_key_env))
 
 
-@traceable(name="embed_query", run_type="embedding")
+@traceable(
+    name="embed_query",
+    run_type="embedding",
+    metadata={
+        "model": "embed-v4.0",
+        "input_type": "classification",
+        "output_dimension": 1536,
+        "embedding_types": ["float"],
+    },
+)
 def generate_embedding(text: str) -> list:
     """One vector for one query, in the model's own configured dimensions."""
-    response = _cohere.embed(
+    response = co.embed(
         model=_settings.embedding.model,
         inputs=[{"content": [{"type": "text", "text": text}]}],
         input_type=_settings.embedding.input_type,
@@ -38,33 +56,16 @@ def generate_embedding(text: str) -> list:
     return response.embeddings.float[0]
 
 
-@traceable(name="retrieving_data", run_type="retriever")
-def retrieve_data(query: str, k: int | None = None) -> dict:
-    """Hybrid search: dense vectors + BM25, fused with reciprocal rank fusion.
+def _rows(points, k: int) -> dict:
+    """The four parallel lists the rest of the application expects.
 
     The catalogue stores several chunks per product, so fusing dense and sparse
     hits can surface the same product more than once. Points are collapsed to one
     per product here, keeping the best score, so the model and the UI both see
     each product once and the requested count is worth asking for.
     """
-    k = k or _retrieval.top_k
-    limit = _retrieval.prefetch_limit
-    results = qdrant_client.query_points(
-        collection_name=_retrieval.collection,
-        prefetch=[
-            Prefetch(query=generate_embedding(query), using=_retrieval.dense_vector, limit=limit),
-            Prefetch(
-                query=Document(text=query, model=_retrieval.sparse_model),
-                using=_retrieval.sparse_vector,
-                limit=limit,
-            ),
-        ],
-        query=FusionQuery(fusion=_retrieval.fusion),
-        limit=limit,
-    )
-
     unique: dict[str, dict] = {}
-    for point in results.points:
+    for point in points:
         payload = point.payload or {}
         product_id = payload.get(_fields.id)
         if not product_id or product_id in unique:
@@ -83,6 +84,39 @@ def retrieve_data(query: str, k: int | None = None) -> dict:
         "similarity_scores": [item["score"] for item in ordered],
         "retrieved_context_ratings": [item["rating"] for item in ordered],
     }
+
+
+@traceable(name="retrieving_data", run_type="retriever")
+def retrieve_data(query: str, k: int | None = None) -> dict:
+    """Hybrid search: dense vectors + BM25, fused with reciprocal rank fusion."""
+    k = k or _retrieval.top_k
+    limit = _retrieval.prefetch_limit
+    results = qdrant_client.query_points(
+        collection_name=_retrieval.collection,
+        prefetch=[
+            Prefetch(query=generate_embedding(query), using=_retrieval.dense_vector, limit=limit),
+            Prefetch(
+                query=Document(text=query, model=_retrieval.sparse_model),
+                using=_retrieval.sparse_vector,
+                limit=limit,
+            ),
+        ],
+        query=FusionQuery(fusion=_retrieval.fusion),
+        limit=limit,
+    )
+    return _rows(results.points, k)
+
+
+@traceable(name="retrieving_data_dense", run_type="retriever")
+def retrieve_data_dense(query: str, k: int | None = None) -> dict:
+    """Single vector search, no fusion. The simpler baseline for the hybrid one."""
+    k = k or _retrieval.top_k
+    results = qdrant_client.query_points(
+        collection_name=_retrieval.collection,
+        query=generate_embedding(query),
+        limit=k,
+    )
+    return _rows(results.points, k)
 
 
 def fetch_product_payloads(product_ids) -> dict:

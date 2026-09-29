@@ -1,114 +1,80 @@
-"""The chat model the agents use, and the providers behind it.
+"""The one chat model the agents talk to.
 
-A thin seam over `agents.providers`, kept because the agents, the graph and the
-tests all import from here. Building a concrete model, building the fallback
-plans, and handing back the one routed model are the only three things here; how
-a provider is reached lives in `providers/`, and how a failed attempt is handled
-lives in `routing/`.
+One client, one model, configured entirely from `config.yaml`. Because it speaks
+OpenAI's protocol, almost any provider works with no code change: set `llm.model`,
+`llm.base_url` and `llm.api_key_env` and restart. The list of endpoints and the
+env var each one uses lives in the `llm` block of `config.yaml`, not here.
+
+`intent_router` needs a structured answer from whatever model is configured, and
+not every OpenAI-compatible model supports JSON schema natively, so that one call
+goes through `instructor`, which gets it from any of them.
 """
 
 import logging
-from typing import TYPE_CHECKING, List
+from functools import lru_cache
 
 from langchain_core.language_models import BaseChatModel
+from langchain_openai import ChatOpenAI
 
-from api.agents.providers import google, groq, openrouter
 from api.core.settings import get_settings
-
-if TYPE_CHECKING:  # the router imports this module, so only the type is needed
-    from api.agents.routing import ProviderPlan
 
 logger = logging.getLogger(__name__)
 
-_cache: dict = {}
+
+def _api_key() -> str:
+    """The configured key, or a clear error naming the env var to set."""
+    llm = get_settings().llm
+    key = (get_settings().provider_api_key(llm.api_key_env) or "").strip()
+    if not key:
+        raise RuntimeError(
+            f"No LLM API key found. Set {llm.api_key_env} in .env, "
+            f"or point llm.api_key_env at the variable that holds it."
+        )
+    return key
 
 
-# --- the pool's provider ----------------------------------------------------
+@lru_cache(maxsize=1)
+def get_chat_model() -> BaseChatModel:
+    """The chat model, built once and shared.
 
-
-def build_chat_model(
-    model_id: str,
-    provider: str = None,
-    temperature: float = None,
-    **overrides,
-) -> BaseChatModel:
-    """One concrete model from the pool's provider."""
-    return openrouter.build(model_id, provider, temperature, **overrides)
-
-
-# --- the fallback providers -------------------------------------------------
-
-
-def build_google_model() -> BaseChatModel | None:
-    """The Google fallback, or None when it is not usable."""
-    return google.build()
-
-
-def build_groq_model(model_id: str) -> BaseChatModel | None:
-    """One Groq model, or None when Groq is not usable."""
-    return groq.build(model_id)
-
-
-def build_fallback_providers() -> "List[ProviderPlan]":
-    """The non OpenRouter providers, in the configured order.
-
-    Each one is a small plan rather than a second routing implementation: an
-    ordered model list plus the one function that builds a model from an id.
+    `max_retries` is left at the SDK's own default: a single provider means a
+    transient failure has nowhere else to go, so retrying it is the only useful
+    response, and the SDK already backs off and respects `Retry-After`.
     """
-    from api.agents.routing import ProviderPlan
-
-    settings = get_settings().llm
-    plans: "List[ProviderPlan]" = []
-
-    for name in settings.fallback_order:
-        if name == "groq":
-            pool = settings.groq.model_pool()
-            if pool and settings.groq.enabled:
-                plans.append(
-                    ProviderPlan(
-                        name="groq",
-                        models=pool,
-                        build=build_groq_model,
-                        strict_structured_output=list(settings.groq.strict_structured_output),
-                    )
-                )
-        elif name == "google":
-            model = build_google_model()
-            if model is not None:
-                plans.append(ProviderPlan(name="google", models=["*"], build=lambda _id, m=model: m))
-
-    return plans
-
-
-# --- what the agents get ----------------------------------------------------
-
-
-def get_chat_model(provider: str = None, temperature: float = None) -> BaseChatModel:
-    """The chat model the agents use.
-
-    Returns a model that walks the configured pool of OpenRouter models, so the
-    callers keep working with one model and never hardcode a model id.
-    """
-    from api.agents.model_router import RoutedChatModel
-
-    provider = provider or openrouter.active_provider()
-    settings = get_settings().llm
-    temperature = settings.temperature if temperature is None else temperature
-
-    cache_key = (provider, temperature)
-    if cache_key in _cache:
-        return _cache[cache_key]
-
-    model = RoutedChatModel(
-        models=get_settings().model_pool(),
-        options=openrouter.client_options(provider, temperature),
-        fallbacks=build_fallback_providers(),
+    llm = get_settings().llm
+    return ChatOpenAI(
+        model=llm.model,
+        base_url=llm.base_url,
+        api_key=_api_key(),
+        temperature=llm.temperature,
+        max_tokens=llm.max_tokens,
+        timeout=llm.timeout_seconds,
     )
-    _cache[cache_key] = model
-    return model
+
+
+@lru_cache(maxsize=1)
+def get_instructor_client():
+    """An instructor client on the same provider, for structured answers.
+
+    Only the intent router needs this. Every other call is an ordinary chat turn
+    with tools, which `get_chat_model` already covers. The model is named on the
+    request rather than here, because the OpenAI client has no default model.
+    """
+    import instructor
+    from openai import OpenAI
+
+    llm = get_settings().llm
+    return instructor.from_openai(
+        OpenAI(
+            base_url=llm.base_url,
+            api_key=_api_key(),
+            timeout=llm.timeout_seconds,
+        ),
+        mode=instructor.Mode.TOOLS,
+    )
 
 
 def provider_label() -> str:
     """Human readable description of what the agents are talking to."""
-    pool = get_settings().model_pool()
-    return f"openrouter: {len(pool)} models, primary {pool[0]}" if pool else "openrouter: no model"
+    llm = get_settings().llm
+    return f"{llm.model} via {llm.base_url}"

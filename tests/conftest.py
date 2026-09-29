@@ -15,16 +15,12 @@ os.environ.setdefault("LANGSMITH_TRACING", "false")
 
 
 @pytest.fixture(autouse=True)
-def _no_cooldown(monkeypatch):
-    """Every test starts with no stored refusal and no walk in progress, so
-    tests do not leak into each other through the process wide state.
+def _no_conversation_state(monkeypatch):
+    """Every test starts with an empty conversation history.
 
-    The state itself lives in `errors.cooldown`, which is where it has to be
-    reset: patching a name on the re-exporting module would leave the real one
-    untouched.
+    The graph keeps its checkpoint in module state, so without this a thread id
+    used by one test would be visible to the next.
     """
-    from api.agents.errors import cooldown
+    from api.agents import checkpointer
 
-    monkeypatch.setattr(cooldown._cooldown, "_error", None)
-    monkeypatch.setattr(cooldown._cooldown, "_until", 0.0)
-    yield
+    monkeypatch.setattr(checkpointer, "get_checkpointer", lambda: checkpointer.InMemorySaver())

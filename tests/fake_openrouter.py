@@ -1,129 +1,69 @@
-"""Stands in for the OpenRouter SDK, so the routing tests never touch the network.
+"""Stands in for the chat model, so the tests never touch the network.
 
-The fakes reproduce the real shape of what OpenRouter returns, taken from the
-live API rather than invented: the status code, the JSON error body, and the
-rate limit headers, all as attributes on the raised exception.
+`install` points `llm.get_chat_model` at a scripted model. `script` maps the
+configured model id to a list of actions, each either an Exception to raise or
+the text to answer with. An empty list means the model is healthy.
 """
 
-import json
-from typing import Any, Iterator, Optional
+import re
+from typing import Any
 
+import httpx
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import AIMessage, AIMessageChunk
 from langchain_core.outputs import ChatGeneration, ChatGenerationChunk, ChatResult
-
-# The real body OpenRouter returned for an exhausted free daily cap.
-DAILY_CAP_BODY = {
-    "error": {
-        "message": "Rate limit exceeded: free-models-per-day. Add 10 credits to unlock 1000 free model requests per day",
-        "code": 429,
-        "metadata": {
-            "headers": {
-                "X-RateLimit-Limit": "50",
-                "X-RateLimit-Remaining": "0",
-                "X-RateLimit-Reset": "1790640000000",
-            },
-            "limit_source": "openrouter_free_tier_daily",
-            "remedy_hint": "Wait for the daily reset, or purchase credits to raise your free-model daily limit.",
-            "provider_name": None,
-        },
-    },
-    "user_id": "user_test",
-}
-
-# A 429 that belongs to one provider rather than to the account.
-PROVIDER_LIMIT_BODY = {
-    "error": {
-        "message": "Provider is temporarily rate-limited upstream",
-        "code": 429,
-        "metadata": {"limit_source": "provider", "provider_name": "Some-Provider"},
-    }
-}
+from langchain_core.tools import tool
 
 
-class FakeOpenRouterError(Exception):
-    """Shaped like the openrouter SDK's error classes: status, body, headers."""
+class FakeProviderError(Exception):
+    """A provider failure shaped like the real SDK's, with a body attached."""
 
-    def __init__(
-        self,
-        status_code: int,
-        body: Any,
-        headers: Optional[dict] = None,
-    ):
+    def __init__(self, message: str, status_code: int = 500, body: str = ""):
+        super().__init__(message)
         self.status_code = status_code
-        self.body = body if isinstance(body, str) else json.dumps(body)
-        self.headers = headers or {}
-        super().__init__(f"Error code: {status_code} - {self.body}")
+        self.body = body
+        self.response = httpx.Response(
+            status_code,
+            text=body,
+            request=httpx.Request("POST", "https://openrouter.ai/api/v1/chat/completions"),
+        )
 
 
-def daily_cap_error() -> FakeOpenRouterError:
-    return FakeOpenRouterError(
-        429,
-        DAILY_CAP_BODY,
-        {"x-ratelimit-limit": "50", "x-ratelimit-remaining": "0", "x-ratelimit-reset": "1790640000000"},
-    )
+def provider_error(status: int = 500, message: str = "upstream unavailable", body: dict | None = None):
+    """A provider failure carrying a body, as a real one does."""
+    payload = body if body is not None else {"error": {"code": status, "message": message}}
+    import json
+
+    return FakeProviderError(f"Error code: {status}", status, json.dumps(payload))
 
 
-def provider_limit_error() -> FakeOpenRouterError:
-    return FakeOpenRouterError(429, PROVIDER_LIMIT_BODY, {"retry-after": "2"})
+def server_error(status: int = 503):
+    return provider_error(status)
 
 
-def server_error(status: int = 503) -> FakeOpenRouterError:
-    return FakeOpenRouterError(status, {"error": {"message": "upstream unavailable"}})
+def daily_cap_error():
+    return provider_error(429, body={"error": {"code": 429, "message": "free-models-per-day"}})
 
 
-def bad_request_error() -> FakeOpenRouterError:
-    return FakeOpenRouterError(400, {"error": {"message": "invalid request"}})
-
-
-def auth_error() -> FakeOpenRouterError:
-    return FakeOpenRouterError(401, {"error": {"message": "No auth credentials found"}})
-
-
-def payment_error() -> FakeOpenRouterError:
-    return FakeOpenRouterError(402, {"error": {"message": "Insufficient credits"}})
-
-
-def timeout_error() -> TimeoutError:
-    return TimeoutError("the request timed out")
-
-
-class CallLog:
-    """Shared record of which model each attempt used.
-
-    A plain object rather than a list, because pydantic copies list fields when
-    it validates a model, which would leave the test's own list untouched.
-    """
-
-    def __init__(self) -> None:
-        self.models: list[str] = []
-
-    def __eq__(self, other) -> bool:
-        return self.models == other
-
-    def __repr__(self) -> str:
-        return f"CallLog({self.models})"
+def payload_too_large_error():
+    return provider_error(413, body={"error": {"code": 413, "message": "Request payload too large"}})
 
 
 class ScriptedModel(BaseChatModel):
-    """A model that fails a set number of times, then answers.
-
-    `script` maps a model id to a list of actions, each either an Exception to
-    raise or the text to answer with. An empty list means the model is healthy.
-    """
+    """A model that fails a set number of times, then answers."""
 
     script: dict = {}
-    log: Any = None
+    calls: list = []
     model_id: str = ""
     tokens_before_failure: int = 0
     stream_text: str = "answer"
 
     @property
     def _llm_type(self) -> str:
-        return "scripted-openrouter"
+        return "scripted"
 
     def _next(self, model_id: str):
-        self.log.models.append(model_id)
+        self.calls.append(model_id)
         steps = self.script.get(model_id) or []
         return steps.pop(0) if steps else None
 
@@ -134,7 +74,7 @@ class ScriptedModel(BaseChatModel):
         text = self.stream_text if action is None else str(action)
         return ChatResult(generations=[ChatGeneration(message=AIMessage(content=text))])
 
-    def _stream(self, messages, stop=None, run_manager=None, **kwargs) -> Iterator[ChatGenerationChunk]:
+    def _stream(self, messages, stop=None, run_manager=None, **kwargs):
         action = self._next(self.model_id)
         if isinstance(action, Exception):
             if self.tokens_before_failure:
@@ -150,108 +90,101 @@ class ScriptedModel(BaseChatModel):
         return self
 
 
-class ScriptedStructuredModel(ScriptedModel):
-    """A model whose `with_structured_output` honours the same script."""
-
-    schema_result: Any = None
-
-    def with_structured_output(self, schema, **kwargs):
-        outer = self
-
-        class _Structured:
-            def invoke(self, input, config=None, **kw):
-                action = outer._next(outer.model_id)
-                if isinstance(action, Exception):
-                    raise action
-                return outer.schema_result
-
-        return _Structured()
-
-
-def install(
-    monkeypatch,
-    script: dict,
-    tokens_before_failure: int = 0,
-    stream_text: str = "answer",
-    structured_factory=None,
-    schema_result: Any = None,
-) -> CallLog:
-    """Point the router at scripted models. Returns the shared call log."""
-    from api.agents import model_router
-
-    log = CallLog()
-
-    def fake_build(model_id: str, **options) -> ScriptedModel:
-        factory = structured_factory if structured_factory else ScriptedModel
-        extra = {"schema_result": schema_result} if structured_factory else {}
-        return factory(
-            script={model_id: list(script.get(model_id, []))},
-            log=log,
-            model_id=model_id,
-            tokens_before_failure=tokens_before_failure,
-            stream_text=stream_text,
-            **extra,
-        )
-
-    # The router owns the pool's client construction, so this is where the
-    # scripted models have to go in.
-    monkeypatch.setattr(model_router, "build_chat_model", fake_build)
-    return log
-
-
 class ToolCallingModel(BaseChatModel):
-    """A model that calls the retrieval tool once, then answers from it.
+    """A model that calls the retrieval tool, then answers from what it got.
 
-    Used by the contract tests so the graph, the tool and the response shape
-    are exercised for real while the provider is not.
+    This is what the shopping agent actually does: call the tool, read the
+    products, write its own answer and quote their ids. The answer is the
+    `answer` text plus, unless `cite=False`, the ids the tool returned. The
+    product *descriptions* are never echoed, because those are the raw tool
+    output and must not reach the chat.
     """
 
-    answer: str = "Here is what we stock."
+    calls: list = []
+    answer: str = "Here are the machines we have in stock."
     cite: bool = True
-    fail_with: Any = None
 
     @property
     def _llm_type(self) -> str:
-        return "scripted-tool-caller"
+        return "tool-calling"
 
     def _wanted_a_tool(self, messages) -> bool:
-        """Call the tool once per turn, whatever the history length is.
+        return not any(getattr(message, "type", "") == "tool" for message in messages)
 
-        Only the messages after the newest human message matter, so a
-        checkpointed conversation from an earlier run cannot change the answer.
-        """
-        last_human = max(
-            (index for index, message in enumerate(messages) if message.type == "human"),
-            default=-1,
-        )
-        return not any(message.type == "tool" for message in messages[last_human + 1 :])
-
-    def _answer_text(self, messages) -> str:
+    def _citations(self, messages) -> str:
         if not self.cite:
-            return self.answer
-        from langchain_core.messages import ToolMessage
-
-        ids: list[str] = []
-        for message in messages:
-            if isinstance(message, ToolMessage) and isinstance(message.content, str):
-                for piece in message.content.split("["):
-                    if "]" in piece:
-                        ids.append(piece.split("]")[0])
-        return f"{self.answer} " + " ".join(f"[{value}]" for value in ids)
+            return ""
+        for message in reversed(messages):
+            if getattr(message, "type", "") == "tool":
+                ids = re.findall(r"\[([A-Z0-9]{10})\]", message.content or "")
+                return " " + " ".join(f"[{product_id}]" for product_id in ids) if ids else ""
+        return ""
 
     def _generate(self, messages, stop=None, run_manager=None, **kwargs) -> ChatResult:
-        if self.fail_with is not None:
-            raise self.fail_with
         if self._wanted_a_tool(messages):
-            call = AIMessage(
-                content="",
-                tool_calls=[
-                    {"name": "retrieve_data_tool", "args": {"query": "washing machine"}, "id": "c1"}
-                ],
+            return ChatResult(
+                generations=[
+                    ChatGeneration(
+                        message=AIMessage(
+                            content="",
+                            tool_calls=[
+                                {"name": "retrieve_data_tool", "args": {"query": "washing machines"}, "id": "call_1"}
+                            ],
+                        )
+                    )
+                ]
             )
-        else:
-            call = AIMessage(content=self._answer_text(messages))
-        return ChatResult(generations=[ChatGeneration(message=call)])
+        return ChatResult(
+            generations=[ChatGeneration(message=AIMessage(content=self.answer + self._citations(messages)))]
+        )
 
     def bind_tools(self, tools, **kwargs):
         return self
+
+
+def install(monkeypatch, script: dict, tokens_before_failure: int = 0, stream_text: str = "answer") -> list:
+    """Point the app at a scripted model. Returns the shared call log."""
+    import api.agents.llm as llm_module
+    import api.agents.agent as agent_module
+
+    calls: list = []
+
+    def build(*args: Any, **kwargs: Any) -> ScriptedModel:
+        return ScriptedModel(
+            script={key: list(value) for key, value in script.items()},
+            calls=calls,
+            model_id="scripted",
+            tokens_before_failure=tokens_before_failure,
+            stream_text=stream_text,
+        )
+
+    monkeypatch.setattr(llm_module, "get_chat_model", build)
+    monkeypatch.setattr(agent_module, "get_chat_model", build)
+    monkeypatch.setattr(agent_module, "get_instructor_client", lambda: _Structured(build()))
+    return calls
+
+
+class _Structured:
+    """A `with_structured_output` shaped object standing in for instructor."""
+
+    def __init__(self, model):
+        self._model = model
+
+    def with_structured_output(self, schema, **kwargs):
+        class _Inner:
+            def invoke(self, input, config=None, **kw):
+                from api.agents.prompts import IntentRouterResponse
+
+                return IntentRouterResponse(question_relevancy=True, answer="")
+
+            async def ainvoke(self, input, config=None, **kw):
+                return self.invoke(input)
+
+        return _Inner()
+
+
+
+@tool
+def retrieve_data_tool(query: str) -> str:
+    """Search the product catalogue for products in stock."""
+    return "[B0TEST0001] (rating: 4.0) A test product."

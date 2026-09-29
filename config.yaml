@@ -1,93 +1,26 @@
 # Every changeable value in the project lives here.
 # Secrets stay in .env; this file only names the env var to read them from.
-# Switch provider or model by editing `llm.active` and `llm.pool`, or by setting
-# the env var those values refer to - no code changes either way.
 
 llm:
-  # The only provider the agents talk to, so every error comes from it.
-  active: openrouter
+  # One OpenAI-compatible provider. These three lines are the whole provider
+  # setup, so switching provider or model is a config edit, never a code edit.
+  #
+  #   OpenRouter   https://openrouter.ai/api/v1     OPENROUTER_API_KEY
+  #   Groq         https://api.groq.com/openai/v1   GROQ_API_KEY
+  #   OpenAI       https://api.openai.com/v1        OPENAI_API_KEY
+  #   Together     https://api.together.xyz/v1     TOGETHER_API_KEY
+  #   DeepSeek     https://api.deepseek.com/v1      DEEPSEEK_API_KEY
+  #
+  # Override any of them from .env to switch without touching this file.
+  model: "${LLM_MODEL:-poolside/laguna-s-2.1:free}"
+  base_url: "${LLM_BASE_URL:-https://openrouter.ai/api/v1}"
+  api_key_env: "${LLM_API_KEY_ENV:-OPENROUTER_API_KEY}"
 
   temperature: 0
-  # Written in seconds. The OpenRouter integration takes milliseconds, so the
-  # conversion happens once in build_chat_model and nowhere else.
-  timeout_seconds: 90
-  # The openrouter SDK behind this integration retries 408/409/429/5xx on its
-  # own, and on a rate limited key every retry costs another daily request.
-  # 0 disables that; llm.py owns the retry policy instead, which backs off
-  # exponential and never retries a request the provider already refused.
-  max_retries: 0
   # Free tiers reject very large max_tokens, so keep this bounded.
   max_tokens: 2048
-
-  # How long to hold a provider off after it refuses. The rotation itself is
-  # flat and bounded, so this is the only retry-related value there is.
-  retries:
-    backoff_seconds: 0.5
-
-  # Ordered pool of OpenRouter model ids, tried one after another.
-  #
-  # Only availability failures move to the next model: a 429 that is not the
-  # account quota, 5xx, timeouts and connection errors. Authentication errors
-  # and our own bad requests stop immediately, and an exhausted account quota
-  # stops immediately because no model can answer it.
-  #
-  # Every id below was verified against https://openrouter.ai/api/v1/models as a
-  # free, text chat model with tool calling, which is what the agent needs.
-  # Override the whole list, or just the head of it, from .env.
-  pool: "${OPENROUTER_MODELS:-poolside/laguna-s-2.1:free,nvidia/nemotron-3-super-120b-a12b:free,thinkingmachines/inkling:free,nvidia/nemotron-3-ultra-550b-a55b:free,qwen/qwen3.8-27b:free,google/gemma-4-31b-it:free,nvidia/nemotron-3.5-lightning:free,google/gemma-4-26b-a4b-it:free,thinkingmachines/inkling-small:free,poolside/laguna-xs-2.1:free,dots-studio/dots-3-note-preview:free,liquid/lfm-2.5-2.6b:free}"
-
-  # Optional. When set and present in the pool it is tried first.
-  primary_model: "${OPENROUTER_PRIMARY_MODEL:-poolside/laguna-s-2.1:free}"
-
-  # The prefix init_chat_model needs. Each id from the pool is sent to
-  # OpenRouter as the request's `model` field.
-  model_prefix: openrouter
-
-  # Optional per provider overrides. base_url only for OpenAI compatible gateways.
-  base_urls:
-    openrouter: https://openrouter.ai/api/v1
-
-  # Provider key auto-detection order, used when active is "auto".
-  auto_detect: [openrouter]
-
-  # Which env var holds each provider's key, in the same order as auto_detect.
-  key_envs:
-    openrouter: OPENROUTER_API_KEY
-
-  # External provider fallback, a different provider rather than another
-  # OpenRouter model. It is only asked once the OpenRouter pool cannot answer,
-  # and never falls back to OpenRouter again.
-  google:
-    enabled: true
-    # Verified against the API for this key. The reference project's
-    # gemini-2.5-flash is retired for new users (HTTP 404), and 3.8/3.7 answer
-    # 503 under current demand, so 3.6 is the one that serves.
-    model: "${GOOGLE_MODEL:-gemini-3.6-flash}"
-    api_key_env: GOOGLE_API_KEY
-    # Seconds. This integration reads the value as seconds, so it needs no
-    # conversion; the OpenRouter integration above is the one in milliseconds.
-    timeout_seconds: 90
-
-  # Groq's own OpenAI compatible endpoint. Nothing is ever sent to
-  # api.openai.com for these models.
-  groq:
-    enabled: true
-    base_url: https://api.groq.com/openai/v1
-    api_key_env: GROQ_API_KEY
-    models: "${GROQ_MODELS:-openai/gpt-oss-120b,openai/gpt-oss-20b,qwen/qwen3.8-27b}"
-    primary_model: "${GROQ_MODEL:-openai/gpt-oss-120b}"
-    timeout_seconds: 60
-    # Groq documents strict JSON Schema for exactly these models, and documents
-    # that structured outputs cannot be combined with streaming or tool use.
-    # A strict request is therefore only ever sent to one of these.
-    strict_structured_output:
-      - openai/gpt-oss-20b
-      - openai/gpt-oss-120b
-      - qwen/qwen3.8-27b
-
-  # Providers tried, in order, once the OpenRouter pool cannot answer. Flat and
-  # bounded: each provider is asked once, and nothing routes back.
-  fallback_order: [groq, google]
+  # Written in seconds. The OpenAI client takes seconds too, so no conversion.
+  timeout_seconds: 120
 
 retrieval:
   collection: Amazon-items-collection-01-hybrid

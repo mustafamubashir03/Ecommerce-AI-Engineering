@@ -25,7 +25,7 @@ def retrieve_data_tool(query: str, k: int = 0) -> str:
 
     try:
         found = retrieve_data(query, min(int(top_k), retrieval.max_top_k))
-    except Exception as error:  # a failing search must not kill the whole turn
+    except Exception as error:
         return f"Product search is unavailable right now ({error}). Answer without it."
 
     products = [

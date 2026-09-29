@@ -36,8 +36,8 @@ EMPTY_ANSWER = "Please ask a question about the products in stock."
 def client(monkeypatch):
     """The real app, with only the model and the catalogue replaced."""
     import api.agents.graph as graph_module
-    import api.agents.retrieval_generation as retrieval
-    import api.agents.shopping_agent as shopping
+    import api.agents.retrieval as retrieval
+    import api.agents.agent as shopping
     import api.agents.tools as tools
     from langgraph.checkpoint.memory import InMemorySaver
 
@@ -231,35 +231,23 @@ def test_off_topic_questions_also_stream_cleanly(client, monkeypatch):
     assert events[-1]["type"] == "done", "the stream still closes cleanly"
 
 
-def test_get_chat_model_returns_a_usable_routed_model():
+def test_get_chat_model_returns_a_usable_model():
     """The agents' entry point has to actually build a model.
 
     `get_chat_model` is the one call the graph makes, and it is normally mocked
     in tests, so a broken import inside it stays invisible until a real request
-    arrives. This calls it for real, with the providers' keys absent so nothing
-    reaches the network.
+    arrives. This calls it for real. The key is read from the environment, and
+    the client is never asked to answer, so nothing reaches the network.
     """
     from api.agents.llm import get_chat_model, provider_label
-    from api.agents.model_router import RoutedChatModel
+    from langchain_openai import ChatOpenAI
 
     model = get_chat_model()
-    assert isinstance(model, RoutedChatModel), f"got {type(model).__name__}"
-    assert model.models, "the configured pool is not empty"
-    assert model.options.get("timeout"), "the client options reached the model"
+    assert isinstance(model, ChatOpenAI), f"got {type(model).__name__}"
+    assert model.model_name, "the configured model reached the client"
+    assert model.openai_api_base, "the configured base_url reached the client"
+    assert model.request_timeout, "the configured timeout reached the client"
     assert provider_label()
-
-
-def test_every_provider_builder_is_reachable_from_the_package():
-    """The names the rest of the application imports must exist where they live."""
-    from api.agents import llm
-    from api.agents.providers import google, groq, openrouter
-
-    for name in ("build_chat_model", "get_chat_model", "build_fallback_providers"):
-        assert callable(getattr(llm, name)), f"llm.{name} is missing"
-    assert callable(openrouter.build)
-    assert callable(groq.build)
-    assert callable(google.build)
-    assert hasattr(google, "AgentOwnedToolLoop")
 
 
 def test_a_failure_after_the_result_does_not_also_report_an_error(client, monkeypatch):
@@ -275,7 +263,7 @@ def test_a_failure_after_the_result_does_not_also_report_an_error(client, monkey
     def result_then_failure(query, thread_id=None):
         yield {"type": "token", "text": "an answer"}
         yield {"type": "result", "payload": {"answer": "an answer", "used_context": PRODUCTS}}
-        raise fake.FakeOpenRouterError(413, {"message": "Request too large"})
+        raise fake.payload_too_large_error()
 
     monkeypatch.setattr(endpoints, "stream_agent", result_then_failure)
 
@@ -298,7 +286,7 @@ def test_a_failure_before_the_result_is_still_reported(client, monkeypatch):
     import api.api.endpoints as endpoints
 
     def fails_immediately(query, thread_id=None):
-        raise fake.FakeOpenRouterError(503, {"message": "upstream unavailable"})
+        raise fake.server_error(503)
 
     monkeypatch.setattr(endpoints, "stream_agent", fails_immediately)
 
@@ -350,7 +338,7 @@ def test_citations_survive_markdown_emphasis():
     The id has to be recovered from that, otherwise the answer renders no
     product cards at all, because no id survives to be looked up.
     """
-    from api.agents.shopping_agent import _cited_ids
+    from api.agents.agent import _cited_ids
 
     assert _cited_ids("Here you go [**B0TEST0001**] and [B0TEST0002]") == [
         "B0TEST0001",
@@ -366,7 +354,7 @@ def test_citations_survive_markdown_emphasis():
 
 def test_only_real_catalogue_ids_are_cited():
     """Bracketed text that is not an id must not be treated as a product."""
-    from api.agents.shopping_agent import _cited_ids
+    from api.agents.agent import _cited_ids
 
     assert _cited_ids("no results [1] [two words] [tool_use_failed]") == []
 
@@ -379,7 +367,7 @@ def test_blocking_answers_cite_the_ids_the_products_came_from(client, monkeypatc
     cleared after the model is replaced, otherwise the scripted model is never
     the one that answers and the test passes without testing anything.
     """
-    import api.agents.shopping_agent as shopping
+    import api.agents.agent as shopping
 
     # cite=False, otherwise the fake appends its own plain [id] citations to the
     # scripted answer and the emphasis is never the only thing under test.
@@ -427,60 +415,56 @@ def test_stream_error_event_carries_the_real_status(client, monkeypatch):
 # --- the provider setup -----------------------------------------------------
 
 
-def test_one_openrouter_base_url_and_one_key():
+def test_one_model_one_base_url_one_key():
+    """The whole provider setup is three values, and nothing else.
+
+    Anything more than that is a second opinion about which provider to talk to,
+    which is how the routing layer grew in the first place.
+    """
     from api.core.settings import get_settings
 
-    settings = get_settings()
-    assert settings.llm.active == "openrouter"
-    assert list(settings.llm.base_urls) == ["openrouter"]
-    assert settings.llm.base_urls["openrouter"] == "https://openrouter.ai/api/v1"
-    assert list(settings.llm.key_envs) == ["openrouter"]
-    assert settings.llm.key_envs["openrouter"] == "OPENROUTER_API_KEY"
+    llm = get_settings().llm
+    assert llm.model, "a model is configured"
+    assert llm.base_url, "a base url is configured"
+    assert llm.api_key_env, "the env var holding the key is named"
+
+    for gone in ("pool", "primary_model", "fallback_order", "active", "key_envs", "base_urls"):
+        assert not hasattr(llm, gone), f"llm.{gone} is a leftover from the routing layer"
 
 
-def test_pool_is_ordered_with_the_primary_first():
-    from api.core.settings import get_settings
+def test_the_configured_model_is_free_and_tool_capable():
+    """The agent needs tool calling, so the model has to support it.
 
-    pool = get_settings().model_pool()
-    assert len(pool) > 1, "the pool must hold more than one model to route across"
-    assert len(pool) == len(set(pool)), "no duplicates"
-    configured = get_settings().llm.primary_model
-    if configured:
-        assert pool[0] == configured
-    assert all(model_id == model_id.strip() and ":" in model_id for model_id in pool)
-
-
-def test_every_pooled_model_is_free_and_tool_capable():
-    """The pool must stay free, text chat, tool capable models.
-
-    Cross checks the configured ids against OpenRouter's own catalog. This is a
-    catalog read, not a model request, so it needs no quota; it skips only when
-    the catalog cannot be reached at all.
+    Cross checks the configured id against OpenRouter's own catalog. This is a
+    catalog read, not a model request, so it needs no quota; it skips when the
+    catalog cannot be reached.
     """
     import json
     import urllib.request
 
     from api.core.settings import get_settings
 
-    url = get_settings().llm.base_urls["openrouter"].rstrip("/") + "/models"
+    llm = get_settings().llm
+    if "openrouter" not in llm.base_url:
+        pytest.skip("not an OpenRouter configuration, so the catalog says nothing useful")
+
     try:
-        with urllib.request.urlopen(url, timeout=30) as response:
+        with urllib.request.urlopen(llm.base_url.rstrip("/") + "/models", timeout=30) as response:
             catalog = json.loads(response.read())
     except Exception as error:  # offline or blocked: the check simply cannot run
         pytest.skip(f"could not read the OpenRouter catalog: {type(error).__name__}")
 
-    entries = {model["id"]: model for model in catalog.get("data", [])}
+    entries = {entry["id"]: entry for entry in catalog.get("data", [])}
     assert entries, "the catalog returned no models"
 
-    for model_id in get_settings().model_pool():
-        entry = entries.get(model_id)
-        assert entry is not None, f"{model_id} is not in the OpenRouter catalog"
-        pricing = entry.get("pricing") or {}
-        assert str(pricing.get("prompt")) == "0" and str(pricing.get("completion")) == "0", (
-            f"{model_id} is not free"
-        )
-        assert entry["architecture"]["output_modalities"] == ["text"], f"{model_id} is not a text chat model"
-        assert "tools" in (entry.get("supported_parameters") or []), f"{model_id} cannot call tools"
+    entry = entries.get(llm.model)
+    assert entry is not None, f"{llm.model} is not in the OpenRouter catalog"
+    pricing = entry.get("pricing") or {}
+    assert str(pricing.get("prompt")) == "0" and str(pricing.get("completion")) == "0", (
+        f"{llm.model} is not free"
+    )
+    assert entry["architecture"]["output_modalities"] == ["text"], f"{llm.model} is not a text chat model"
+    assert "tools" in (entry.get("supported_parameters") or []), f"{llm.model} cannot call tools"
 
 
 def test_no_direct_provider_sdk_in_the_request_path():
@@ -493,43 +477,3 @@ def test_no_direct_provider_sdk_in_the_request_path():
     assert "openrouter.ai/api/v1" not in source, "the base url belongs in config.yaml, not in code"
     for other in ("api.openai.com", "generativelanguage", "api.anthropic.com", "api.cohere"):
         assert other not in source
-
-
-def test_every_pooled_model_can_actually_be_built(monkeypatch):
-    """The real factory must accept the options the router hands it.
-
-    Builds each model with the router's own options, so a mismatch between the
-    two signatures fails here instead of at the first real request.
-    """
-    from api.agents.model_router import RoutedChatModel
-    from api.agents.prompts import IntentRouterResponse
-    from api.agents.providers import openrouter
-    from api.core.settings import get_settings
-
-    built: list[str] = []
-
-    class RecordingModel(fake.ScriptedModel):
-        @property
-        def _llm_type(self) -> str:
-            return "recorded"
-
-    def fake_init_chat_model(target: str, **options):
-        built.append(target)
-        assert "temperature" in options and "timeout" in options, options.keys()
-        return RecordingModel()
-
-    monkeypatch.setattr(openrouter, "init_chat_model", fake_init_chat_model)
-
-    settings = get_settings()
-    routed = RoutedChatModel(
-        models=settings.model_pool(),
-        options=openrouter.client_options("openrouter", settings.llm.temperature),
-    )
-    for model_id in settings.model_pool():
-        built.clear()
-        next(step.build() for step in routed._steps() if step.model_id == model_id)
-        assert built == [f"openrouter:{model_id}"], f"{model_id} was not addressed as expected"
-
-    # and the structured output path, which passes its own extra kwargs
-    structured = routed.with_structured_output(IntentRouterResponse, method="json_schema")
-    assert structured.structured_kwargs == {"method": "json_schema"}
