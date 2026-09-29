@@ -13,6 +13,8 @@ not sent again while the refusal is current.
 
 from api.agents.errors.classification import (
     ACCOUNT_QUOTA_MARKERS,
+    CEILING_PERMANENT,
+    CEILING_TRANSIENT,
     NEVER_RETRY_STATUS,
     RETRYABLE_STATUS,
     ProviderError,
@@ -22,6 +24,7 @@ from api.agents.errors.classification import (
     is_fallback_worthy,
     is_routing_restriction,
     status_of,
+    token_ceiling,
     wait_for,
 )
 from api.agents.errors.cooldown import (
@@ -32,6 +35,8 @@ from api.agents.errors.cooldown import (
 
 __all__ = [
     "ACCOUNT_QUOTA_MARKERS",
+    "CEILING_PERMANENT",
+    "CEILING_TRANSIENT",
     "NEVER_RETRY_STATUS",
     "RETRYABLE_STATUS",
     "ProviderError",
@@ -43,6 +48,7 @@ __all__ = [
     "is_routing_restriction",
     "record_pool_failure",
     "status_of",
+    "token_ceiling",
     "trip",
     "wait_for",
 ]

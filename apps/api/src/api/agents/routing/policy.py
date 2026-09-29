@@ -13,7 +13,7 @@ of being retried somewhere that cannot do any better.
 
 from typing import TYPE_CHECKING, List
 
-from api.agents.errors import is_account_quota, is_fallback_worthy, wait_for
+from api.agents.errors import is_account_quota, is_fallback_worthy, token_ceiling, wait_for
 from api.core.settings import get_settings
 
 if TYPE_CHECKING:  # pragma: no cover - import cycle only matters for typing
@@ -36,12 +36,20 @@ def action(
     * OpenRouter account quota -> move to the next provider. Rotating through the
       pool would only rediscover the same refusal, so the caller records a
       cooldown instead.
+    * a 413 the body proves is a token window -> move to the next provider. The
+      window belongs to the provider rather than to one model, so a sibling model
+      would be refused for the same reason at the same cost.
     * availability failure      -> rotate inside the provider, and once the
       provider is spent, move to the next one.
     * application/request error -> surface. A 400, 401, 403, 404, 413 or 422
       fails the same way on every other provider, and retrying hides the cause.
     """
     if openrouter and is_account_quota(error):
+        return NEXT_PROVIDER
+    if token_ceiling(error) is not None:
+        # Checked before the fallback-worthy gate, which would otherwise call a
+        # 413 unrecoverable. A 413 with no token-window evidence is not a
+        # ceiling and falls through to be raised as before.
         return NEXT_PROVIDER
     if not is_fallback_worthy(error):
         return RAISE

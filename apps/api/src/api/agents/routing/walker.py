@@ -8,7 +8,13 @@ be two copies of the same policy, which is how the two drift apart.
 import logging
 from typing import Any, Awaitable, Callable, List, Optional, Tuple
 
-from api.agents.errors.classification import describe, is_account_quota
+from api.agents.errors.classification import (
+    CEILING_PERMANENT,
+    CEILING_TRANSIENT,
+    describe,
+    is_account_quota,
+    token_ceiling,
+)
 from api.agents.errors.cooldown import record_pool_failure, trip
 from api.agents.routing.policy import (
     PRIMARY,
@@ -45,14 +51,24 @@ def after_failure(
         error, openrouter=openrouter, last_of_provider=not more_in_provider, last_step=last_step
     )
 
+    # A request larger than the provider's whole window is this request's
+    # problem rather than the provider's, so it is never held against the
+    # provider: the next, smaller request would be served normally.
+    ceiling = token_ceiling(error)
+    holdable = ceiling != CEILING_PERMANENT
+
     if taken == RAISE:
-        return "raise", index, record_pool_failure(error) if openrouter and last_step else None
+        return "raise", index, record_pool_failure(error) if openrouter and last_step and holdable else None
 
     # An account quota belongs to the account, not to one model, so hold the
     # whole provider off instead of paying for the same refusal on every model.
     if openrouter and is_account_quota(error):
         trip(error, cooldown_wait(error))
-    elif openrouter and last_step:
+    elif openrouter and ceiling == CEILING_TRANSIENT:
+        # The window is full rather than too small, so the next turn would be
+        # refused the same way. Held through the existing pool-failure path.
+        record_pool_failure(error)
+    elif openrouter and last_step and holdable:
         record_pool_failure(error)
 
     # ROTATE stays inside the provider; NEXT_PROVIDER skips the rest of it, so a
@@ -62,7 +78,7 @@ def after_failure(
     )
     if following >= len(steps):
         # Nothing left to try, so this failure is the answer.
-        return "raise", index, record_pool_failure(error) if openrouter else None
+        return "raise", index, record_pool_failure(error) if openrouter and holdable else None
 
     logger.warning(
         "%s/%s failed with %s. Trying the next %s.",

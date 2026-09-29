@@ -23,7 +23,12 @@ import httpx
 import pytest
 
 import fake_openrouter as fake
-from api.agents.errors import is_fallback_worthy, status_of
+from api.agents.errors import (
+    CEILING_PERMANENT,
+    is_fallback_worthy,
+    status_of,
+    token_ceiling,
+)
 from api.agents.model_router import RoutedChatModel
 from api.agents.routing.policy import RAISE, action
 
@@ -60,26 +65,37 @@ def groq_error(status: int = 413, body: dict | None = None) -> Exception:
     return APIStatusError(f"Error code: {status}", response=response, body=payload)
 
 
-# --- the routing decision is unchanged --------------------------------------
+# --- the routing decision ----------------------------------------------------
 
 
-def test_a_groq_413_is_still_classified_413_and_raises():
+def test_a_groq_413_is_still_classified_413():
     error = groq_error()
     assert status_of(error) == 413
-    assert is_fallback_worthy(error) is False
-    assert action(error, openrouter=False, last_of_provider=False, last_step=False) == RAISE
+    assert token_ceiling(error) == CEILING_PERMANENT, "the live body is a proven ceiling"
 
 
-def test_a_groq_413_does_not_ask_another_model(monkeypatch):
-    """The pool stops at the 413 rather than walking on, as it did before."""
+def test_a_groq_413_skips_its_own_provider_but_may_reach_the_next_one(monkeypatch):
+    """A ceiling is a provider's limit, so siblings are skipped, not walked.
+
+    Both models here belong to the same provider, so the walk has nothing left
+    after the ceiling and the failure is still what reaches the caller.
+    """
     calls = fake.install(monkeypatch, {"model/a": [groq_error()], "model/b": []})
     routed = RoutedChatModel(models=["model/a", "model/b"], options={"api_key": "test"})
 
     with pytest.raises(Exception) as raised:
         routed.invoke("which washing machines do you have?")
 
-    assert calls == ["model/a"], "a 413 must not rotate to the next model"
+    assert calls == ["model/a"], "a 413 ceiling must not try the provider's next model"
     assert status_of(raised.value) == 413
+
+
+def test_an_ambiguous_413_is_not_a_ceiling_and_still_raises():
+    """A 413 with no token-window evidence is unrecoverable, as it always was."""
+    plain = groq_error(body={"message": "Request payload too large", "code": 413})
+    assert token_ceiling(plain) is None
+    assert is_fallback_worthy(plain) is False
+    assert action(plain, openrouter=False, last_of_provider=False, last_step=False) == RAISE
 
 
 # --- the client never sees the provider's words -----------------------------

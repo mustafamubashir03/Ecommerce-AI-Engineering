@@ -215,6 +215,54 @@ def is_account_quota(error: BaseException) -> bool:
     return any(marker in haystack for marker in ACCOUNT_QUOTA_MARKERS)
 
 
+# A provider whose token window is full, or whose window the request outgrows,
+# answers with HTTP 413 rather than 429 and names both figures in the body:
+#
+#   "on tokens per minute (TPM): Limit 8000, Requested 8154, ..."
+#
+# Both numbers are read from the body rather than configured: the window belongs
+# to the organisation, and the account's own value is the authoritative one.
+_TOKEN_WINDOW_SIGNAL = re.compile(r"tokens?\s+per\s+minute|\bTPM\b", re.IGNORECASE)
+_TOKEN_WINDOW_FIGURES = re.compile(r"Limit\s*([\d,]+).*?Requested\s*([\d,]+)", re.IGNORECASE | re.DOTALL)
+
+# What a proven token ceiling means for the provider that refused.
+CEILING_TRANSIENT = "transient"  # the window may merely be full right now
+CEILING_PERMANENT = "permanent"  # the request outgrows the whole window
+
+
+def token_ceiling(error: BaseException) -> str | None:
+    """How a 413 is scoped, or None when the body does not prove it is a window.
+
+    A 413 on its own says nothing useful: OpenRouter answers a payload that is
+    too large for its proxy with 413, and that request would be refused by every
+    model it could be sent to. So this only reports a ceiling when the body
+    carries two independent pieces of evidence, a token-window signal and a
+    parseable Limit/Requested pair. Anything else returns None, and the caller
+    keeps treating the 413 as unrecoverable.
+
+    PERMANENT means the request alone is larger than the whole window, so no
+    amount of waiting can satisfy it. TRANSIENT means the request would fit in
+    the window but the window is currently full.
+    """
+    if status_of(error) != 413:
+        return None
+
+    inner = _error_object(error)
+    body = body_of(error)
+    message = " ".join(
+        str(value) for value in (inner.get("type"), inner.get("message"), body) if value
+    )
+    if not _TOKEN_WINDOW_SIGNAL.search(message):
+        return None
+
+    figures = _TOKEN_WINDOW_FIGURES.search(body)
+    if not figures:
+        return None
+
+    limit, requested = (int(value.replace(",", "")) for value in figures.groups())
+    return CEILING_PERMANENT if requested > limit else CEILING_TRANSIENT
+
+
 def is_fallback_worthy(error: BaseException) -> bool:
     """True when trying the next model in the pool could plausibly succeed."""
     if is_account_quota(error):
@@ -227,6 +275,11 @@ def is_fallback_worthy(error: BaseException) -> bool:
     if status == 403 and is_routing_restriction(error):
         # The provider refused this one route, not the key, so the next model
         # is worth trying. A 403 without that evidence still stops the walk.
+        return True
+    if token_ceiling(error) is not None:
+        # A 413 the body proves is a token window, rather than a payload or a
+        # context limit. This is read here as well as in the policy so a ceiling
+        # held by the cooldown is walked away from instead of being re-raised.
         return True
     if status in NEVER_RETRY_STATUS:
         # A bad request, a bad key or a missing model fails the same way on
