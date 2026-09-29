@@ -8,8 +8,8 @@ and the graph can look up its image and price.
 
 from langchain.tools import tool
 
-from api.agents.retrieval_generation import retrieve_data
 from api.core.settings import get_settings
+from api.agents.retrieval import retrieve_data
 
 
 @tool

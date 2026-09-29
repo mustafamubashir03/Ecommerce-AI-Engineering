@@ -6,9 +6,12 @@ from langgraph.constants import END, START
 from langgraph.graph import StateGraph
 from langgraph.graph.message import add_messages
 
+from api.agents.agent import (
+    agent_node,
+    intent_router_condition_edges,
+    intent_router_node,
+)
 from api.agents.checkpointer import get_checkpointer
-from api.agents.router import intent_router_condition_edges, intent_router_node
-from api.agents.shopping_agent import agent_node
 
 EMPTY_ANSWER = "Please ask a question about the products in stock."
 
