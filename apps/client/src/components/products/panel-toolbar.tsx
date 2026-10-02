@@ -1,5 +1,4 @@
 import { LayoutGrid, List, SlidersHorizontal } from "lucide-react";
-
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -14,14 +13,12 @@ import { Slider } from "@/components/ui/slider";
 import { Separator } from "@/components/ui/separator";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import type { SortKey } from "@/types/ecommerce";
-
 const SORTS: { value: SortKey; label: string }[] = [
   { value: "relevance", label: "Agent order" },
   { value: "price-asc", label: "Price: low to high" },
   { value: "price-desc", label: "Price: high to low" },
   { value: "rating", label: "Top rated" },
 ];
-
 export function PanelToolbar({
   count,
   sort,
@@ -50,7 +47,6 @@ export function PanelToolbar({
       <span className="text-sm text-muted-foreground">
         {count} {count === 1 ? "product" : "products"}
       </span>
-
       <Select value={sort} onValueChange={(value) => onSortChange(value as SortKey)}>
         <SelectTrigger size="sm" className="w-auto" aria-label="Sort products">
           <SelectValue />
@@ -63,7 +59,6 @@ export function PanelToolbar({
           ))}
         </SelectContent>
       </Select>
-
       <Popover>
         <PopoverTrigger
           render={
@@ -88,9 +83,7 @@ export function PanelToolbar({
             />
             <p className="text-xs text-muted-foreground">Up to ${Math.round(maxPrice)}</p>
           </div>
-
           <Separator />
-
           <div className="space-y-3">
             <Label htmlFor="min-rating">Minimum rating</Label>
             <Slider
@@ -110,7 +103,6 @@ export function PanelToolbar({
           </div>
         </PopoverContent>
       </Popover>
-
       <ToggleGroup
         value={[view]}
         onValueChange={(value) => value.length > 0 && onViewChange(value[0] as "grid" | "list")}

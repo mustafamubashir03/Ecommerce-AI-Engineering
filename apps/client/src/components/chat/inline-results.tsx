@@ -1,13 +1,10 @@
 import { AnimatePresence, motion } from "framer-motion";
-
 import { ProductScroller, ScrollerItem } from "@/components/chat/product-scroller";
 import { Button } from "@/components/ui/button";
 import { ProductCard } from "@/components/products/product-card";
 import { useShop } from "@/context/shop-context";
 import type { ChatMessage, Product } from "@/types/ecommerce";
-
 const MAX_INLINE = 8;
-
 export function InlineResults({
   message,
   onOpen,
@@ -18,9 +15,7 @@ export function InlineResults({
   const { openPanel } = useShop();
   const visible = message.products.slice(0, MAX_INLINE);
   const hidden = message.products.length - visible.length;
-
   if (visible.length === 0) return null;
-
   return (
     <div className="space-y-2">
       <div className="flex items-center justify-between gap-2">
@@ -28,7 +23,6 @@ export function InlineResults({
           {message.products.length} {message.products.length === 1 ? "product" : "products"} from this answer
         </h3>
       </div>
-
       <ProductScroller label="Products used in this answer">
         {visible.map((product, index) => (
           <ScrollerItem key={product.id}>
@@ -42,7 +36,6 @@ export function InlineResults({
           </ScrollerItem>
         ))}
       </ProductScroller>
-
       <AnimatePresence initial={false}>
         {message.products.length > 0 ? (
           <motion.div

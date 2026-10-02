@@ -12,14 +12,12 @@ dist
 dist-ssr
 *.local
 
-# Playwright output and the browser-driven specs. They are local tooling: the
-# specs need a running client and API, and the results hold failure artifacts.
+# Playwright output. The specs and the config are tracked: they are the test
+# suite, not local tooling.
 test-results
 playwright-report
 blob-report
 playwright/.cache
-e2e
-playwright.config.ts
 
 # Editor directories and files
 .vscode/*

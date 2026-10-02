@@ -1,10 +1,3 @@
-"""The existing API contract must survive the routing work.
-
-These tests mock the model, never the retrieval contract: the graph, the tool,
-the hydration and the HTTP/SSE shapes all run for real, so a change to the
-routing layer cannot quietly alter what the client receives.
-"""
-
 import json
 
 import pytest
@@ -56,7 +49,6 @@ def client(monkeypatch):
         retrieval, "fetch_product_payloads", lambda ids: {p["id"]: {"image": p["image_url"]} for p in PRODUCTS}
     )
     monkeypatch.setattr(shopping, "hydrate_used_context", lambda refs: [p for p in PRODUCTS])
-    # An in memory saver keeps these tests hermetic and repeatable.
     monkeypatch.setattr(graph_module, "get_checkpointer", lambda: InMemorySaver())
     shopping.get_agent.cache_clear()
     monkeypatch.setattr(graph_module, "graph", graph_module.build_graph())
@@ -66,17 +58,22 @@ def client(monkeypatch):
     return TestClient(app, raise_server_exceptions=False)
 
 
-# --- blocking endpoint ------------------------------------------------------
-
-
 def test_agent_response_contract(client):
     body = client.post("/agent/", json={"query": "which washing machines do you have?"}).json()
-    assert set(body) == {"request_id", "answer", "question_relevancy", "used_context", "thread_id"}
+    assert set(body) == {
+        "request_id",
+        "answer",
+        "question_relevancy",
+        "used_context",
+        "thread_id",
+        "trace_id",
+    }
     assert isinstance(body["request_id"], str) and len(body["request_id"]) > 8
     assert body["answer"]
     assert body["question_relevancy"] is True
     assert body["used_context"] == PRODUCTS, "product context is passed through unchanged"
     assert body["thread_id"], "a thread id is generated when the client sends none"
+    assert isinstance(body["trace_id"], str), "always a string, empty when tracing is off"
 
 
 def test_used_context_item_contract(client):
@@ -105,9 +102,6 @@ def test_empty_query_is_answered_without_a_model_call(client):
     assert body["used_context"] == []
 
 
-# --- streaming endpoint -----------------------------------------------------
-
-
 def test_stream_event_contract(client):
     events = []
     with client.stream("POST", "/agent/stream", json={"query": "washing machines", "thread_id": "s1"}) as response:
@@ -125,6 +119,7 @@ def test_stream_event_contract(client):
         "question_relevancy",
         "used_context",
         "thread_id",
+        "trace_id",
     }
     assert result["payload"]["used_context"] == PRODUCTS
     assert result["payload"]["thread_id"] == "s1"
@@ -147,7 +142,6 @@ def test_blocking_and_streaming_expose_the_same_contract(client):
     assert streamed["used_context"] == blocking["used_context"]
     assert streamed["question_relevancy"] == blocking["question_relevancy"]
     assert streamed["thread_id"] == blocking["thread_id"] == "same"
-    # The request id identifies this request, so the two differ.
     assert blocking["request_id"] != streamed["request_id"]
 
 
@@ -161,12 +155,6 @@ def test_stream_carries_tokens(client):
 
 
 def test_stream_does_not_leak_the_question_or_the_tool_output(client):
-    """Only the assistant's own writing belongs in the chat bubble.
-
-    The stream also carries the human message and the raw tool result, and the
-    client appends every token it receives to the assistant message, so any
-    token that is not the assistant's text is printed into the conversation.
-    """
     events = []
     with client.stream("POST", "/agent/stream", json={"query": "washing machines"}) as response:
         for line in response.iter_lines():
@@ -188,13 +176,6 @@ def test_stream_does_not_leak_the_question_or_the_tool_output(client):
 
 
 def test_off_topic_questions_finish_cleanly(client, monkeypatch):
-    """An off-topic question must not crash the turn.
-
-    The intent router ends the graph for a question that is not about the
-    catalogue, and that branch is easy to get wrong: returning langgraph's END
-    instead of the map's own key raises KeyError('__end__'), which reaches the
-    client as a 500 rather than as a polite "ask about the catalogue".
-    """
     import api.agents.graph as graph_module
 
     monkeypatch.setattr(
@@ -232,13 +213,6 @@ def test_off_topic_questions_also_stream_cleanly(client, monkeypatch):
 
 
 def test_get_chat_model_returns_a_usable_model():
-    """The agents' entry point has to actually build a model.
-
-    `get_chat_model` is the one call the graph makes, and it is normally mocked
-    in tests, so a broken import inside it stays invisible until a real request
-    arrives. This calls it for real. The key is read from the environment, and
-    the client is never asked to answer, so nothing reaches the network.
-    """
     from api.agents.llm import get_chat_model, provider_label
     from langchain_openai import ChatOpenAI
 
@@ -251,13 +225,6 @@ def test_get_chat_model_returns_a_usable_model():
 
 
 def test_a_failure_after_the_result_does_not_also_report_an_error(client, monkeypatch):
-    """A finished answer must not arrive next to an error banner.
-
-    The graph can deliver the answer and its products and then fail on
-    something later. The turn is complete from the client's point of view, so
-    the stream closes cleanly instead of sending an error the UI would render
-    as a failure under a complete answer.
-    """
     import api.api.endpoints as endpoints
 
     def result_then_failure(query, thread_id=None):
@@ -265,7 +232,7 @@ def test_a_failure_after_the_result_does_not_also_report_an_error(client, monkey
         yield {"type": "result", "payload": {"answer": "an answer", "used_context": PRODUCTS}}
         raise fake.payload_too_large_error()
 
-    monkeypatch.setattr(endpoints, "stream_agent", result_then_failure)
+    monkeypatch.setattr(endpoints, "rag_agent_stream_wrapper", result_then_failure)
 
     events = []
     with client.stream("POST", "/agent/stream", json={"query": "washing machines"}) as response:
@@ -288,7 +255,7 @@ def test_a_failure_before_the_result_is_still_reported(client, monkeypatch):
     def fails_immediately(query, thread_id=None):
         raise fake.server_error(503)
 
-    monkeypatch.setattr(endpoints, "stream_agent", fails_immediately)
+    monkeypatch.setattr(endpoints, "rag_agent_stream_wrapper", fails_immediately)
 
     events = []
     with client.stream("POST", "/agent/stream", json={"query": "washing machines"}) as response:
@@ -301,9 +268,6 @@ def test_a_failure_before_the_result_is_still_reported(client, monkeypatch):
 
 
 def test_exactly_one_result_event_per_turn(client):
-    """The client stores a result by running its handler, so a duplicate result
-    is a duplicated state update, and a stream contract that varies in length is
-    harder to reason about than one that does not."""
     events = []
     with client.stream("POST", "/agent/stream", json={"query": "washing machines"}) as response:
         for line in response.iter_lines():
@@ -333,11 +297,6 @@ def test_exactly_one_result_for_an_off_topic_turn(client, monkeypatch):
 
 
 def test_citations_survive_markdown_emphasis():
-    """Models wrap catalogue ids in emphasis, e.g. [**B0TEST0001**].
-
-    The id has to be recovered from that, otherwise the answer renders no
-    product cards at all, because no id survives to be looked up.
-    """
     from api.agents.agent import _cited_ids
 
     assert _cited_ids("Here you go [**B0TEST0001**] and [B0TEST0002]") == [
@@ -360,17 +319,8 @@ def test_only_real_catalogue_ids_are_cited():
 
 
 def test_blocking_answers_cite_the_ids_the_products_came_from(client, monkeypatch):
-    """The ids in the answer must be the ids the client receives.
-
-    This is the link the chat's citation buttons follow, so a mismatch here is
-    what makes a citation unclickable. The agent is cached, so the cache is
-    cleared after the model is replaced, otherwise the scripted model is never
-    the one that answers and the test passes without testing anything.
-    """
     import api.agents.agent as shopping
 
-    # cite=False, otherwise the fake appends its own plain [id] citations to the
-    # scripted answer and the emphasis is never the only thing under test.
     answered = "These are ours [**B0TEST0001**], [_B0TEST0002_]."
     monkeypatch.setattr(
         shopping, "get_chat_model", lambda *a, **k: fake.ToolCallingModel(answer=answered, cite=False)
@@ -387,18 +337,12 @@ def test_blocking_answers_cite_the_ids_the_products_came_from(client, monkeypatc
 
 
 def test_stream_error_event_carries_the_real_status(client, monkeypatch):
-    """The provider's status reaches the client; its own words do not.
-
-    The message is written for the caller, so the quota marker the provider sent
-    is no longer in it. `tests/test_error_sanitization.py` covers that in full.
-    """
     import api.api.endpoints as endpoints
 
     def failing(*args, **kwargs):
         raise fake.daily_cap_error()
 
-    # The endpoint imported the function by name, so patch it where it is used.
-    monkeypatch.setattr(endpoints, "stream_agent", failing)
+    monkeypatch.setattr(endpoints, "rag_agent_stream_wrapper", failing)
     events = []
     with client.stream("POST", "/agent/stream", json={"query": "washing machines"}) as response:
         for line in response.iter_lines():
@@ -412,33 +356,23 @@ def test_stream_error_event_carries_the_real_status(client, monkeypatch):
     assert events[-1]["type"] == "done", "the stream still closes cleanly"
 
 
-# --- the provider setup -----------------------------------------------------
-
-
 def test_one_model_one_base_url_one_key():
-    """The whole provider setup is three values, and nothing else.
-
-    Anything more than that is a second opinion about which provider to talk to,
-    which is how the routing layer grew in the first place.
-    """
     from api.core.settings import get_settings
 
     llm = get_settings().llm
     assert llm.model, "a model is configured"
     assert llm.base_url, "a base url is configured"
-    assert llm.api_key_env, "the env var holding the key is named"
+
+    if not llm.api_key_env:
+        assert any(host in llm.base_url for host in ("localhost", "127.0.0.1", "host.docker.internal")), (
+            f"no key is named, so the endpoint has to be local: {llm.base_url}"
+        )
 
     for gone in ("pool", "primary_model", "fallback_order", "active", "key_envs", "base_urls"):
         assert not hasattr(llm, gone), f"llm.{gone} is a leftover from the routing layer"
 
 
 def test_the_configured_model_is_free_and_tool_capable():
-    """The agent needs tool calling, so the model has to support it.
-
-    Cross checks the configured id against OpenRouter's own catalog. This is a
-    catalog read, not a model request, so it needs no quota; it skips when the
-    catalog cannot be reached.
-    """
     import json
     import urllib.request
 
@@ -451,7 +385,7 @@ def test_the_configured_model_is_free_and_tool_capable():
     try:
         with urllib.request.urlopen(llm.base_url.rstrip("/") + "/models", timeout=30) as response:
             catalog = json.loads(response.read())
-    except Exception as error:  # offline or blocked: the check simply cannot run
+    except Exception as error:
         pytest.skip(f"could not read the OpenRouter catalog: {type(error).__name__}")
 
     entries = {entry["id"]: entry for entry in catalog.get("data", [])}

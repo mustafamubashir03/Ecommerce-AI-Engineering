@@ -1,10 +1,3 @@
-"""Reading text out of a conversation.
-
-`BaseMessage.text` already handles every shape a provider returns: a plain
-string, a list of content blocks, or nothing at all. These are the two
-reductions over a list of messages that it cannot do for us.
-"""
-
 from typing import Any, List
 
 

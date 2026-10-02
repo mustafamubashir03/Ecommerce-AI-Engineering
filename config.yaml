@@ -1,4 +1,4 @@
-# Every changeable value in the project lives here.
+﻿# Every changeable value in the project lives here.
 # Secrets stay in .env; this file only names the env var to read them from.
 
 llm:
@@ -11,25 +11,59 @@ llm:
   #   Together     https://api.together.xyz/v1     TOGETHER_API_KEY
   #   DeepSeek     https://api.deepseek.com/v1      DEEPSEEK_API_KEY
   #
+  # A local server speaks the same protocol and authenticates nobody, so its
+  # api_key_env is left empty. Two things matter for one inside Docker:
+  #   * the url must be host.docker.internal, not localhost. Inside a container
+  #     `localhost` is that container, so a server on your machine is unreachable.
+  #   * `extra_hosts` in docker-compose.yml is what makes that name resolve.
+  #     Running the API outside Docker, plain localhost is correct.
+  #
+  #   Ollama      http://host.docker.internal:11434/v1    (no key)
+  #
   # Override any of them from .env to switch without touching this file.
-  model: "${LLM_MODEL:-poolside/laguna-s-2.1:free}"
-  base_url: "${LLM_BASE_URL:-https://openrouter.ai/api/v1}"
-  api_key_env: "${LLM_API_KEY_ENV:-OPENROUTER_API_KEY}"
+  model: "${LLM_MODEL:-qwen3:8b}"
+  base_url: "${LLM_BASE_URL:-http://host.docker.internal:11434/v1}"
+  api_key_env: "${LLM_API_KEY_ENV:-}"
 
   temperature: 0
-  # Free tiers reject very large max_tokens, so keep this bounded.
-  max_tokens: 2048
+  # The output ceiling, and it is charged whether or not the answer uses it.
+  #
+  # The provider meters tokens per minute against the *declared* max_tokens, so
+  # this number sets how many questions a free tier can serve per minute: on an
+  # 8,000 token per minute budget, 2048 reserves a quarter of the window on every
+  # single call before the question is even counted. The longest answer this
+  # assistant has produced is about 900 tokens, so 1024 keeps real headroom while
+  # doubling how much manual testing fits in the window.
+  max_tokens: 1024
   # Written in seconds. The OpenAI client takes seconds too, so no conversion.
   timeout_seconds: 120
+  # The HTTP client's own retry count. This must stay 0.
+  #
+  # The application owns failure policy: a refusal must reach the code that
+  # decides what to do about it, immediately and with its real status. The
+  # OpenAI client retries 429 and 5xx twice on its own by default, so a rate
+  # limited model would be called three times before anything saw the failure,
+  # which wastes the daily quota on requests that cannot succeed and hides the
+  # status from the layer that needs it.
+  max_retries: 0
+  # Whether the provider is asked for a streaming response.
+  #
+  # On, the model writes its answer as it goes and the browser receives it in
+  # pieces, which is what the SSE endpoint exists for. Off, the provider is
+  # called once and the whole answer arrives together, so the stream carries it
+  # in a single piece. Turn it off only for a provider whose streaming responses
+  # this client misreads.
+  streaming: true
 
 retrieval:
   collection: Amazon-items-collection-01-hybrid
   top_k: 5
-  max_top_k: 10
+  # The ceiling on what the agent may ask for. It was 10, which let one tool
+  # result carry twice the products it ever needs to: five is what a search
+  # returns and what the answer can usefully cite.
+  max_top_k: 5
   fusion: rrf
   prefetch_limit: 20
-
-  # Qdrant named vectors for the hybrid search.
   dense_vector: text-embedding-3-small
   sparse_vector: bm25
   sparse_model: qdrant/bm25
@@ -63,22 +97,62 @@ api:
   cors_allow_credentials: true
 
 agent:
-  max_iterations: 12
+  # Graph steps allowed in one turn, and deliberately not the real ceiling.
+  #
+  # The real ceiling is the model call limit in the agent middleware: six calls.
+  # This number has to stay comfortably above what six calls cost in graph steps,
+  # because a model call plus the tool call it asks for is two steps and the limit
+  # needs room to finish the turn afterwards. Measured: at 24 the graceful stop
+  # was still being cut off by this limit and the turn failed with a 500 instead
+  # of ending with the answer it had. From 26 it ends cleanly, and 30 leaves room.
+  max_iterations: 30
 
   prompts:
     intent_router: |
-      You are part of a shopping assistant that can answer questions about products in stock.
-      Instructions:
-      - Classify the question as relevant or not relevant.
-      - If it is not relevant, return False in "question_relevancy" and set "answer" to why.
-      - If it is relevant, return True in "question_relevancy" and set "answer" to "".
-      - You only answer questions about the products in stock.
+      You are the relevance gate for a shopping assistant that answers questions
+      about the products it has in stock. Your only job is to decide whether a
+      customer's message is about that product domain.
+
+      Mark a message relevant, with "question_relevancy" true and "answer" empty,
+      when the customer is:
+      - asking what to buy, asking for a recommendation, or asking what to get
+      - comparing products, or asking which of several is better or suits a need
+      - asking whether something is available, in stock, or what exists in a
+        category or for a purpose
+      - asking about a product's price, size, specification, features or value
+      - asking what buyers think: reviews, complaints, praise, reliability,
+        experience, or whether something is worth buying
+      - following up on an earlier product question, even when this message on
+        its own names no product at all
+
+      Treat the customer's wording as secondary. "Can you suggest best bathroom
+      products to buy?", "what should I get for a small flat?" and "any complaints
+      about these?" are all product questions, even though none of them says
+      Amazon, catalogue or product. Asking in general terms, conversationally, or
+      without naming a specific item is still asking about products.
+
+      Mark a message not relevant, with "question_relevancy" false and a short
+      reason in "answer", only when the message is clearly something else:
+      - general knowledge that is not about products: history, geography, sport,
+        politics, science trivia, famous people
+      - programming or technical requests: writing or debugging code, explaining
+        a language or a library
+      - any other task with no plausible connection to choosing or evaluating a
+        product
+
+      When a message could reasonably be read either way, mark it relevant. The
+      assistant can search the catalogue and reply that nothing in stock fits.
+      Refusing the question before that point is the worse mistake, because the
+      customer is told the question cannot be answered when it was never tried.
 
     shopping_agent: |
       You are a shopping assistant that answers questions about the products that are currently in stock.
       Instructions:
       - Always call the `retrieve_data_tool` tool before answering anything about products, prices, ratings or availability.
-      - You may call the tool several times, with a broader or a more specific wording, until the available products answer the question.
+      - Call `retrieve_reviews_data` when the customer asks what buyers think, or for
+        complaints, praise, reliability or experience. Pass it the product ids that
+        `retrieve_data_tool` returned, and quote what buyers actually wrote.
+      - You may call the tools several times, with a broader or a more specific wording, until the available products answer the question.
       - Answer only from what the tool returned, never from memory. If the products do not cover the question, say so.
       - Never use the word context, refer to it as the available products.
       - Quote the id of every product you use inline, like this: [B0ABC12345].

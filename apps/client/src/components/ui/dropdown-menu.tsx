@@ -2,19 +2,15 @@ import * as React from "react"
 import { Menu as MenuPrimitive } from "@base-ui/react/menu"
 import { cn } from "cn"
 import { ChevronRightIcon, CheckIcon } from "lucide-react"
-
 function DropdownMenu({ ...props }: MenuPrimitive.Root.Props) {
   return <MenuPrimitive.Root data-slot="dropdown-menu" {...props} />
 }
-
 function DropdownMenuPortal({ ...props }: MenuPrimitive.Portal.Props) {
   return <MenuPrimitive.Portal data-slot="dropdown-menu-portal" {...props} />
 }
-
 function DropdownMenuTrigger({ ...props }: MenuPrimitive.Trigger.Props) {
   return <MenuPrimitive.Trigger data-slot="dropdown-menu-trigger" {...props} />
 }
-
 function DropdownMenuContent({
   align = "start",
   alignOffset = 0,
@@ -45,11 +41,9 @@ function DropdownMenuContent({
     </MenuPrimitive.Portal>
   )
 }
-
 function DropdownMenuGroup({ ...props }: MenuPrimitive.Group.Props) {
   return <MenuPrimitive.Group data-slot="dropdown-menu-group" {...props} />
 }
-
 function DropdownMenuLabel({
   className,
   inset,
@@ -69,7 +63,6 @@ function DropdownMenuLabel({
     />
   )
 }
-
 function DropdownMenuItem({
   className,
   inset,
@@ -92,11 +85,9 @@ function DropdownMenuItem({
     />
   )
 }
-
 function DropdownMenuSub({ ...props }: MenuPrimitive.SubmenuRoot.Props) {
   return <MenuPrimitive.SubmenuRoot data-slot="dropdown-menu-sub" {...props} />
 }
-
 function DropdownMenuSubTrigger({
   className,
   inset,
@@ -120,7 +111,6 @@ function DropdownMenuSubTrigger({
     </MenuPrimitive.SubmenuTrigger>
   )
 }
-
 function DropdownMenuSubContent({
   align = "start",
   alignOffset = -3,
@@ -141,7 +131,6 @@ function DropdownMenuSubContent({
     />
   )
 }
-
 function DropdownMenuCheckboxItem({
   className,
   children,
@@ -175,7 +164,6 @@ function DropdownMenuCheckboxItem({
     </MenuPrimitive.CheckboxItem>
   )
 }
-
 function DropdownMenuRadioGroup({ ...props }: MenuPrimitive.RadioGroup.Props) {
   return (
     <MenuPrimitive.RadioGroup
@@ -184,7 +172,6 @@ function DropdownMenuRadioGroup({ ...props }: MenuPrimitive.RadioGroup.Props) {
     />
   )
 }
-
 function DropdownMenuRadioItem({
   className,
   children,
@@ -216,7 +203,6 @@ function DropdownMenuRadioItem({
     </MenuPrimitive.RadioItem>
   )
 }
-
 function DropdownMenuSeparator({
   className,
   ...props
@@ -229,7 +215,6 @@ function DropdownMenuSeparator({
     />
   )
 }
-
 function DropdownMenuShortcut({
   className,
   ...props
@@ -245,7 +230,6 @@ function DropdownMenuShortcut({
     />
   )
 }
-
 export {
   DropdownMenu,
   DropdownMenuPortal,

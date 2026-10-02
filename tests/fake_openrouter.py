@@ -1,10 +1,3 @@
-"""Stands in for the chat model, so the tests never touch the network.
-
-`install` points `llm.get_chat_model` at a scripted model. `script` maps the
-configured model id to a list of actions, each either an Exception to raise or
-the text to answer with. An empty list means the model is healthy.
-"""
-
 import re
 from typing import Any
 
@@ -78,7 +71,6 @@ class ScriptedModel(BaseChatModel):
         action = self._next(self.model_id)
         if isinstance(action, Exception):
             if self.tokens_before_failure:
-                # Emit tokens, then fail: the caller has already sent output.
                 for piece in self.stream_text.split(" ")[: self.tokens_before_failure]:
                     yield ChatGenerationChunk(message=AIMessageChunk(content=piece + " "))
             raise action
@@ -91,14 +83,6 @@ class ScriptedModel(BaseChatModel):
 
 
 class ToolCallingModel(BaseChatModel):
-    """A model that calls the retrieval tool, then answers from what it got.
-
-    This is what the shopping agent actually does: call the tool, read the
-    products, write its own answer and quote their ids. The answer is the
-    `answer` text plus, unless `cite=False`, the ids the tool returned. The
-    product *descriptions* are never echoed, because those are the raw tool
-    output and must not reach the chat.
-    """
 
     calls: list = []
     answer: str = "Here are the machines we have in stock."
@@ -181,7 +165,6 @@ class _Structured:
                 return self.invoke(input)
 
         return _Inner()
-
 
 
 @tool

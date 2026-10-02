@@ -13,7 +13,6 @@ import {
   Trash2,
 } from "lucide-react";
 import { motion } from "framer-motion";
-
 import { AspectRatio } from "@/components/ui/aspect-ratio";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -24,7 +23,6 @@ import { formatPrice, formatRating } from "@/lib/format";
 import { EASE, enterUp } from "@/lib/motion";
 import { cn } from "@/lib/utils";
 import type { Product } from "@/types/ecommerce";
-
 export function ProductDetail({ product }: { product: Product }) {
   const {
     hideDetail,
@@ -40,31 +38,23 @@ export function ProductDetail({ product }: { product: Product }) {
     compare,
     products,
   } = useShop();
-
   const rating = formatRating(product.rating);
   const line = cart.find((item) => item.product.id === product.id);
   const isSaved = saved.some((item) => item.id === product.id);
   const isCompared = compare.some((item) => item.id === product.id);
   const [copiedId, setCopiedId] = useState<string | null>(null);
-  // Derived, so moving to another product clears the confirmation without an
-  // effect that would re-render on every product change.
   const copied = copiedId === product.id;
-
-  // Where this product sits in the current result set, so the page can step
-  // through them without going back to the panel first.
   const position = products.findIndex((item) => item.id === product.id);
   const previous = position > 0 ? products[position - 1] : null;
   const next = position >= 0 && position < products.length - 1 ? products[position + 1] : null;
-
   const copyId = async () => {
     try {
       await navigator.clipboard.writeText(product.id);
       setCopiedId(product.id);
-    } catch {
-      // Clipboard access can be refused; the id is on screen either way.
-    }
+      } catch {
+        /* the clipboard can be refused; the id is on screen either way */
+      }
   };
-
   return (
     <motion.div
       key={product.id}
@@ -77,7 +67,6 @@ export function ProductDetail({ product }: { product: Product }) {
         <Button variant="ghost" size="icon" className="size-8" onClick={hideDetail} aria-label="Back to results">
           <ArrowLeft className="size-4" />
         </Button>
-
         <div className="min-w-0 flex-1">
           <p className="truncate text-xs text-muted-foreground">
             {position >= 0 && products.length > 1
@@ -85,7 +74,6 @@ export function ProductDetail({ product }: { product: Product }) {
               : "Product detail"}
           </p>
         </div>
-
         <div className="flex items-center gap-1">
           <Button
             variant="ghost"
@@ -109,11 +97,7 @@ export function ProductDetail({ product }: { product: Product }) {
           </Button>
         </div>
       </div>
-
       <div className="min-h-0 flex-1 overflow-y-auto">
-        {/* Two columns once there is room, so a narrow phone panel gets one
-            readable column and a wide desktop panel does not stretch a photo
-            across the whole window. */}
         <div className="grid gap-5 p-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)] lg:items-start">
           <motion.div
             initial={{ opacity: 0, scale: 0.98 }}
@@ -136,7 +120,6 @@ export function ProductDetail({ product }: { product: Product }) {
               )}
             </AspectRatio>
           </motion.div>
-
           <div className="min-w-0 space-y-4">
             <div className="space-y-2">
               <div className="flex items-start justify-between gap-3">
@@ -145,7 +128,6 @@ export function ProductDetail({ product }: { product: Product }) {
                 </h2>
                 {line ? <Badge variant="secondary">In cart &times;{line.quantity}</Badge> : null}
               </div>
-
               <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
                 <span className="text-2xl font-semibold text-foreground">
                   {formatPrice(product.price)}
@@ -172,7 +154,6 @@ export function ProductDetail({ product }: { product: Product }) {
                 )}
               </div>
             </div>
-
             {product.reason ? (
               <div className="space-y-1.5 rounded-lg border border-border bg-accent/50 px-3 py-2.5">
                 <h3 className="text-xs font-semibold tracking-wide text-muted-foreground uppercase">
@@ -181,7 +162,6 @@ export function ProductDetail({ product }: { product: Product }) {
                 <p className="text-sm text-foreground">{product.reason}</p>
               </div>
             ) : null}
-
             <div className="flex flex-wrap items-center gap-2">
               <Button
                 variant={isSaved ? "secondary" : "outline"}
@@ -198,7 +178,6 @@ export function ProductDetail({ product }: { product: Product }) {
                 </motion.span>
                 {isSaved ? "Saved" : "Save"}
               </Button>
-
               <Button
                 variant={isCompared ? "secondary" : "outline"}
                 size="sm"
@@ -208,7 +187,6 @@ export function ProductDetail({ product }: { product: Product }) {
                 <Scale className="size-3.5" />
                 {isCompared ? "Comparing" : "Compare"}
               </Button>
-
               <Tooltip>
                 <TooltipTrigger
                   render={
@@ -221,9 +199,7 @@ export function ProductDetail({ product }: { product: Product }) {
                 <TooltipContent>{product.id}</TooltipContent>
               </Tooltip>
             </div>
-
             <Separator />
-
             <div className="space-y-2 text-sm">
               <h3 className="font-semibold text-foreground">Catalog record</h3>
               <dl className="grid grid-cols-[auto_1fr] gap-y-2 text-muted-foreground">
@@ -238,7 +214,6 @@ export function ProductDetail({ product }: { product: Product }) {
           </div>
         </div>
       </div>
-
       <div className="flex items-center gap-2 border-t border-border p-3">
         {line ? (
           <>

@@ -22,6 +22,7 @@ class State(TypedDict, total=False):
     answer: str
     messages: Annotated[List[AnyMessage], add_messages]
     used_context: List[Dict[str, Any]]
+    trace_id: str
 
 
 def build_graph():
@@ -51,6 +52,7 @@ def _result(state: dict, thread_id: str) -> dict:
         "used_context": state.get("used_context", []),
         "question_relevancy": state.get("question_relevancy", False),
         "thread_id": thread_id,
+        "trace_id": state.get("trace_id", ""),
     }
 
 
@@ -65,32 +67,16 @@ def run_agent(query: str, thread_id: str = None) -> dict:
 
 
 def stream_agent(query: str, thread_id: str = None) -> Iterator[dict]:
-    """Yield SSE ready events while the agent is still working.
+    from api.agents.stream import stream_graph_events
 
-    `messages` gives the tokens as the model produces them, `values` gives the
-    finished state once the agent loop ends.
-    """
     if not query or not query.strip():
         yield {"type": "result", "payload": _result({"answer": EMPTY_ANSWER}, thread_id or "")}
         return
 
     config = _config(thread_id)
-    result_sent = False
-    for mode, chunk in graph.stream(
+    yield from stream_graph_events(
+        graph,
         {"initial_query": query},
-        config=config,
-        stream_mode=["messages", "values"],
-    ):
-        if mode == "messages":
-            token, _metadata = chunk
-            if getattr(token, "type", None) != "ai":
-                continue
-            text = token.text
-            if text:
-                yield {"type": "token", "text": text}
-        elif mode == "values" and chunk.get("answer") and not result_sent:
-            result_sent = True
-            yield {
-                "type": "result",
-                "payload": _result(chunk, config["configurable"]["thread_id"]),
-            }
+        config,
+        lambda state: _result(state, config["configurable"]["thread_id"]),
+    )

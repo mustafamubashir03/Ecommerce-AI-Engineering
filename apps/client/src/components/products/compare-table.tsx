@@ -1,14 +1,11 @@
 import { X } from "lucide-react";
-
 import { Button } from "@/components/ui/button";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { useShop } from "@/context/shop-context";
 import { formatPrice, formatRating } from "@/lib/format";
 import { cn } from "@/lib/utils";
-
 export function CompareTable() {
   const { compare, toggleCompare, addToCart } = useShop();
-
   if (compare.length === 0) {
     return (
       <p className="p-4 text-sm text-muted-foreground">
@@ -16,12 +13,10 @@ export function CompareTable() {
       </p>
     );
   }
-
   const prices = compare.map((product) => product.price).filter((price): price is number => price !== null);
   const ratings = compare.map((product) => product.rating).filter((rating): rating is number => rating !== null);
   const bestPrice = prices.length > 0 ? Math.min(...prices) : null;
   const bestRating = ratings.length > 0 ? Math.max(...ratings) : null;
-
   return (
     <div className="space-y-4 p-4">
       <div className="overflow-hidden rounded-lg border border-border">
@@ -49,7 +44,6 @@ export function CompareTable() {
             ))}
           </TableRow>
         </TableHeader>
-
         <TableBody>
           <TableRow>
             <TableCell className="text-muted-foreground">Price</TableCell>
@@ -65,7 +59,6 @@ export function CompareTable() {
               </TableCell>
             ))}
           </TableRow>
-
           <TableRow>
             <TableCell className="text-muted-foreground">Rating</TableCell>
             {compare.map((product) => (
@@ -80,7 +73,6 @@ export function CompareTable() {
               </TableCell>
             ))}
           </TableRow>
-
           <TableRow>
             <TableCell className="text-muted-foreground">Product ID</TableCell>
             {compare.map((product) => (
@@ -89,7 +81,6 @@ export function CompareTable() {
               </TableCell>
             ))}
           </TableRow>
-
           <TableRow>
             <TableCell className="text-muted-foreground">Agent's reason</TableCell>
             {compare.map((product) => (
@@ -98,7 +89,6 @@ export function CompareTable() {
               </TableCell>
             ))}
           </TableRow>
-
           <TableRow>
             <TableCell />
             {compare.map((product) => (

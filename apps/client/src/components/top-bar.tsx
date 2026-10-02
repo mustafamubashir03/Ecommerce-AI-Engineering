@@ -1,7 +1,6 @@
 import { useEffect, useState } from "react";
 import { PanelRight, Search } from "lucide-react";
 import { useTheme } from "next-themes";
-
 import { CartSheet } from "@/components/cart-sheet";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -19,7 +18,6 @@ import { SidebarTrigger } from "@/components/ui/sidebar";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useShop } from "@/context/shop-context";
 import { formatPrice } from "@/lib/format";
-
 export function TopBar() {
   const {
     activeConversation,
@@ -33,11 +31,9 @@ export function TopBar() {
     newChat,
     selectConversation,
   } = useShop();
-
   const { resolvedTheme, setTheme } = useTheme();
   const [commandOpen, setCommandOpen] = useState(false);
   const [search, setSearch] = useState("");
-
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === "k" && (event.metaKey || event.ctrlKey)) {
@@ -48,7 +44,6 @@ export function TopBar() {
     document.addEventListener("keydown", onKeyDown);
     return () => document.removeEventListener("keydown", onKeyDown);
   }, []);
-
   const cartCount = cart.reduce((sum, line) => sum + line.quantity, 0);
   const needle = search.trim().toLowerCase();
   const productMatches = products.filter((product) =>
@@ -57,15 +52,12 @@ export function TopBar() {
   const chatMatches = conversations.filter((conversation) =>
     conversation.title.toLowerCase().includes(needle)
   );
-
   return (
     <header className="flex h-14 shrink-0 items-center gap-2 border-b border-border px-4">
       <SidebarTrigger className="size-8" aria-label="Toggle sidebar" />
-
       <h1 className="min-w-0 flex-1 truncate text-sm font-semibold text-foreground">
         {activeConversation.title}
       </h1>
-
       <Button
         variant="outline"
         size="sm"
@@ -76,7 +68,6 @@ export function TopBar() {
         Search products
         <CommandShortcut>⌘K</CommandShortcut>
       </Button>
-
       <Tooltip>
         <TooltipTrigger
           render={
@@ -93,7 +84,6 @@ export function TopBar() {
         </TooltipTrigger>
         <TooltipContent>Search products</TooltipContent>
       </Tooltip>
-
       {products.length > 0 ? (
         <Button variant="ghost" size="sm" onClick={panel.open ? closePanel : () => openPanel("results")}>
           <PanelRight className="size-4" />
@@ -101,9 +91,7 @@ export function TopBar() {
           <Badge variant="outline">{products.length}</Badge>
         </Button>
       ) : null}
-
       <CartSheet count={cartCount} />
-
       <CommandDialog
         open={commandOpen}
         onOpenChange={setCommandOpen}
@@ -113,7 +101,6 @@ export function TopBar() {
         <CommandInput value={search} onValueChange={setSearch} placeholder="Search chats and products" />
         <CommandList>
           <CommandEmpty>Nothing matches that search.</CommandEmpty>
-
           {search.trim() ? (
             <>
               {productMatches.length > 0 ? (
@@ -135,7 +122,6 @@ export function TopBar() {
                   ))}
                 </CommandGroup>
               ) : null}
-
               {chatMatches.length > 0 ? (
                 <CommandGroup heading="Chats">
                   {chatMatches.map((conversation) => (

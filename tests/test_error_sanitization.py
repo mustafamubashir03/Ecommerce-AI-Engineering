@@ -1,27 +1,9 @@
-"""What the client is told when a provider fails.
-
-A live 413 looked like this once it had been through the API:
-
-    HTTP 413: {"message":"Request too large for model `openai/gpt-oss-120b` in
-    organization `org_01khkq8n11eq8r2hcq0jxfabyd` service tier `on_demand` on
-    tokens per minute (TPM): Limit 8000, Requested 8154, ... Upgrade to Dev Tier
-    today at https://console.groq.com/settings/billing","type":"tokens",...}
-
-An account id, a service tier, a billing link and a raw body do not belong in a
-response sent to a browser. The caller gets a message written for them; the raw
-failure stays in the server log.
-
-Groq is reached through the OpenAI client, so the real error class here is
-`openai.APIStatusError`, which is what actually raised.
-"""
-
 import json
 import logging
 
 import httpx
 import pytest
 
-# The internal details from the live body. None of them may reach the client.
 ORG_ID = "org_01khkq8n11eq8r2hcq0jxfabyd"
 BILLING_URL = "https://console.groq.com/settings/billing"
 SERVICE_TIER = "on_demand"
@@ -37,7 +19,6 @@ GROQ_413_BODY = {
     "code": "request_too_large",
 }
 
-# Everything a provider body is allowed to contain and still leak through.
 LEAKS = (ORG_ID, BILLING_URL, SERVICE_TIER, "on tokens per minute", "gpt-oss-120b", "request_too_large")
 
 
@@ -61,9 +42,6 @@ def assert_sanitised(payload: str) -> None:
     assert "http 413:" not in lowered, f"the raw describe() string reached the client: {payload}"
 
 
-# --- the status is still reported -------------------------------------------
-
-
 def test_a_413_is_classified_413():
     from api.agents.errors import status_of
 
@@ -78,9 +56,6 @@ def test_a_status_reported_inside_a_200_body_wins_over_the_transport():
     error = provider_error(200, {"error": {"message": "upstream overloaded", "code": 503}})
     error.body = body
     assert status_of(error) == 503
-
-
-# --- the client never sees the provider's words -----------------------------
 
 
 @pytest.fixture
@@ -99,7 +74,7 @@ def client(monkeypatch):
         yield  # pragma: no cover - makes this a generator, like the real one
 
     monkeypatch.setattr(endpoints_module, "run_agent", failing_run_agent)
-    monkeypatch.setattr(endpoints_module, "stream_agent", failing_stream_agent)
+    monkeypatch.setattr(endpoints_module, "rag_agent_stream_wrapper", failing_stream_agent)
     return TestClient(app, raise_server_exceptions=False)
 
 
@@ -132,9 +107,6 @@ def test_the_stream_error_event_carries_no_provider_internals(client):
     assert "token" in events[0]["message"].lower()
 
 
-# --- every status is covered, not just 413 ----------------------------------
-
-
 @pytest.mark.parametrize("status", [400, 401, 402, 403, 404, 413, 422, 429, 500, 503])
 def test_no_status_can_leak_the_body(status):
     from api.api.endpoints import _as_http_error
@@ -152,9 +124,6 @@ def test_an_unreachable_provider_gets_a_message():
     assert http_error.status_code == 500
     assert "reached" in http_error.detail["error"].lower()
     assert "10.0.0.7" not in json.dumps(http_error.detail)
-
-
-# --- the detail is not lost, it is logged -----------------------------------
 
 
 def test_the_server_side_log_keeps_the_full_provider_body(caplog):

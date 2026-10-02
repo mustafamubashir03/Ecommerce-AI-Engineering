@@ -1,8 +1,5 @@
 import { useMemo } from "react";
-
 import type { Product, SortKey } from "@/types/ecommerce";
-
-/** Filter by the price ceiling, then order the way the toolbar asks for. */
 export function usePanelProducts(
   source: Product[],
   sort: SortKey,
@@ -16,7 +13,6 @@ export function usePanelProducts(
         (minRating === 0 || (product.rating !== null && product.rating >= minRating))
     );
     const sorted = [...filtered];
-
     if (sort === "price-asc") {
       sorted.sort((a, b) => (a.price ?? Infinity) - (b.price ?? Infinity));
     } else if (sort === "price-desc") {
@@ -24,7 +20,6 @@ export function usePanelProducts(
     } else if (sort === "rating") {
       sorted.sort((a, b) => (b.rating ?? -Infinity) - (a.rating ?? -Infinity));
     }
-
     return sorted;
   }, [source, sort, maxPrice, minRating]);
 }

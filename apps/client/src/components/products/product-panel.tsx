@@ -1,7 +1,6 @@
 import { useState } from "react";
 import { X } from "lucide-react";
 import { motion } from "framer-motion";
-
 import { CartTab } from "@/components/products/cart-tab";
 import { CompareTable } from "@/components/products/compare-table";
 import { ProductCard } from "@/components/products/product-card";
@@ -14,30 +13,25 @@ import { useShop } from "@/context/shop-context";
 import { usePanelProducts } from "@/hooks/use-panel-products";
 import { stagger } from "@/lib/motion";
 import { cn } from "@/lib/utils";
-
+const RESULT_GRID = stagger();
 export function ProductPanel() {
-  const { products, saved, compare, panel, sort, setSort, openPanel, closePanel } = useShop();
-
+  const { products, findProduct, saved, compare, panel, sort, setSort, openPanel, closePanel } = useShop();
   const [maxPrice, setMaxPrice] = useState(Number.POSITIVE_INFINITY);
   const [minRating, setMinRating] = useState(0);
   const [view, setView] = useState<"grid" | "list">("grid");
-
   const prices = products
     .map((product) => product.price)
     .filter((price): price is number => price !== null);
   const ceiling = prices.length > 0 ? Math.ceil(Math.max(...prices)) : 100;
-
   const results = usePanelProducts(
     products,
     sort,
     Number.isFinite(maxPrice) ? maxPrice : ceiling,
     minRating
   );
-  const detail = products.find((product) => product.id === panel.detailId) ?? null;
+  const detail = panel.detailId ? findProduct(panel.detailId) : null;
   const comparing = compare.length > 1 && panel.tab === "results";
-
   if (detail) return <ProductDetail product={detail} />;
-
   return (
     <div className="flex h-full min-h-0 min-w-0 flex-col border-l border-border bg-card">
       <div className="flex items-center justify-between gap-2 border-b border-border px-4 py-3">
@@ -54,7 +48,6 @@ export function ProductPanel() {
           <X className="size-4" />
         </Button>
       </div>
-
       <Tabs
         value={panel.tab}
         onValueChange={(value) => openPanel(value as "results" | "saved" | "cart")}
@@ -73,7 +66,6 @@ export function ProductPanel() {
             </TabsTrigger>
           </TabsList>
         </div>
-
         <TabsContent value="results" className="min-h-0 flex-1">
           {products.length === 0 ? (
             <Empty
@@ -96,19 +88,14 @@ export function ProductPanel() {
                   onViewChange={setView}
                 />
               </div>
-
               <ScrollArea className="min-h-0 flex-1">
                 {results.length === 0 ? (
                   <Empty title="No matches" body="Widen the filters to see more products." />
                 ) : comparing ? (
                   <CompareTable />
                 ) : (
-                  // Columns follow the panel's own width, not the viewport's.
-                  // A viewport breakpoint like `sm:grid-cols-2` puts two
-                  // columns in a panel that is only a third of a laptop screen,
-                  // which is what pushed the layout past the viewport.
                   <motion.div
-                    variants={stagger()}
+                    variants={RESULT_GRID}
                     initial="hidden"
                     animate="visible"
                     className={cn(
@@ -125,7 +112,6 @@ export function ProductPanel() {
             </div>
           )}
         </TabsContent>
-
         <TabsContent value="saved" className="min-h-0 flex-1">
           <ScrollArea className="h-full">
             {saved.length === 0 ? (
@@ -139,7 +125,6 @@ export function ProductPanel() {
             )}
           </ScrollArea>
         </TabsContent>
-
         <TabsContent value="cart" className="min-h-0 flex-1">
           <CartTab />
         </TabsContent>
@@ -147,7 +132,6 @@ export function ProductPanel() {
     </div>
   );
 }
-
 function Empty({ title, body }: { title: string; body: string }) {
   return (
     <div className="flex h-full flex-col items-center justify-center gap-2 p-8 text-center">

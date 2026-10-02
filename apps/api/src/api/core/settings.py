@@ -1,9 +1,3 @@
-"""Single source of truth for every changeable value.
-
-Values come from `config.yaml` at the repository root. Secrets are never stored
-there: each entry only names the env var to read the secret from.
-"""
-
 import os
 import re
 from functools import lru_cache
@@ -27,18 +21,15 @@ def _find_config() -> Path:
 
 
 class LLMSettings(BaseModel):
-    """One OpenAI-compatible provider.
-
-    Every field here is a value a provider needs, so pointing this at another
-    OpenAI-compatible endpoint is a config edit and never a code edit.
-    """
 
     model: str
     base_url: str
-    api_key_env: str
+    api_key_env: str = ""
     temperature: float = 0.0
     max_tokens: int | None = 2048
     timeout_seconds: float = 120.0
+    max_retries: int = 0
+    streaming: bool = True
 
 
 class FieldNames(BaseModel):
@@ -106,12 +97,6 @@ class Settings(BaseModel):
 
 
 def load_env() -> None:
-    """Load .env, tolerating a UTF-8 BOM.
-
-    Editors that write a BOM silently rename the first variable (it arrives as
-    '\\ufeffOPENAI_API_KEY'), which makes that key invisible to the app. Reading
-    with utf-8-sig drops the BOM instead.
-    """
     load_dotenv(encoding="utf-8-sig")
     load_dotenv(dotenv_path=_find_config().parent / ".env", encoding="utf-8-sig")
 
@@ -120,11 +105,6 @@ _ENV_REF = re.compile(r"\$\{(?P<name>[A-Z0-9_]+)(?::-([^}]*))?\}")
 
 
 def _expand_env(value: Any) -> Any:
-    """Replace ${VAR} and ${VAR:-fallback} in config values from the environment.
-
-    This is what keeps a changeable value in one place: config.yaml names the
-    variable, .env holds the value, and no code edit is needed to change it.
-    """
 
     def replace(match: re.Match) -> str:
         name, fallback = match.group("name"), match.group(2)

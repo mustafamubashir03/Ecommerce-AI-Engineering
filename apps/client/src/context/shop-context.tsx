@@ -9,10 +9,9 @@ import {
   type ReactNode,
 } from "react";
 import { toast } from "sonner";
-
-import { toProduct, uniqueProducts } from "@/lib/format";
+import { toProduct, latestProducts } from "@/lib/format";
 import { TokenBuffer } from "@/lib/token-buffer";
-import { streamAgent } from "@/services/api";
+import { streamAgent, submitFeedback } from "@/services/api";
 import type {
   CartLine,
   ChatMessage,
@@ -21,15 +20,12 @@ import type {
   Product,
   SortKey,
 } from "@/types/ecommerce";
-
 const STORAGE_KEYS = {
   conversations: "aether.conversations.v1",
   cart: "aether.cart.v1",
   saved: "aether.saved.v1",
 } as const;
-
 const MAX_COMPARE = 4;
-
 function readStorage<T>(key: string, fallback: T): T {
   try {
     const raw = localStorage.getItem(key);
@@ -38,15 +34,25 @@ function readStorage<T>(key: string, fallback: T): T {
     return fallback;
   }
 }
-
-function writeStorage(key: string, value: unknown) {
-  try {
-    localStorage.setItem(key, JSON.stringify(value));
-  } catch {
-    /* storage unavailable, state stays in memory */
+  function writeStorage(key: string, value: unknown) {
+    try {
+      localStorage.setItem(key, JSON.stringify(value));
+    } catch {
+      /* storage unavailable, state stays in memory */
+    }
   }
+function withMessageDefaults(conversation: Conversation): Conversation {
+  return {
+    ...conversation,
+    messages: (conversation.messages ?? []).map((message) => ({
+      ...message,
+      traceId: message.traceId ?? null,
+      vote: message.vote ?? null,
+      feedbackError: message.feedbackError ?? null,
+      activity: message.activity ?? null,
+    })),
+  };
 }
-
 function newConversation(): Conversation {
   return {
     id: crypto.randomUUID(),
@@ -56,12 +62,13 @@ function newConversation(): Conversation {
     messages: [],
   };
 }
-
 interface ShopContextValue {
   conversations: Conversation[];
   activeConversation: Conversation;
   isBusy: boolean;
   products: Product[];
+  resultsMessageId: string | null;
+  findProduct: (id: string) => Product | null;
   cart: CartLine[];
   saved: Product[];
   compare: Product[];
@@ -70,7 +77,8 @@ interface ShopContextValue {
   sort: SortKey;
   send: (text: string) => void;
   stop: () => void;
-  retry: () => void;
+  retry: (messageId?: string) => void;
+  sendFeedback: (messageId: string, feedback: { score?: number | null; text?: string }) => Promise<void>;
   newChat: () => void;
   selectConversation: (id: string) => void;
   deleteConversation: (id: string) => void;
@@ -87,13 +95,11 @@ interface ShopContextValue {
   showDetail: (product: Product) => void;
   hideDetail: () => void;
 }
-
 const ShopContext = createContext<ShopContextValue | null>(null);
-
 export function ShopProvider({ children }: { children: ReactNode }) {
   const [conversations, setConversations] = useState<Conversation[]>(() => {
     const stored = readStorage<Conversation[]>(STORAGE_KEYS.conversations, []);
-    return stored.length > 0 ? stored : [newConversation()];
+    return stored.length > 0 ? stored.map(withMessageDefaults) : [newConversation()];
   });
   const [activeId, setActiveId] = useState(() => conversations[0].id);
   const [cart, setCart] = useState<CartLine[]>(() => readStorage<CartLine[]>(STORAGE_KEYS.cart, []));
@@ -105,37 +111,36 @@ export function ShopProvider({ children }: { children: ReactNode }) {
   const [panelState, setPanel] = useState<{
     tab: PanelTab;
     detailId: string | null;
-    /**
-     * Whether the user closed the panel themselves. Only a dismissal hides the
-     * panel: without it, a reload of a conversation that already has products
-     * would leave the panel closed with no way to open it again, because a new
-     * turn is the only other thing that ever opens it.
-     */
     dismissed: boolean;
   }>({
     tab: "results",
     detailId: null,
     dismissed: false,
   });
-
   const abortRef = useRef<AbortController | null>(null);
-
   useEffect(() => writeStorage(STORAGE_KEYS.conversations, conversations), [conversations]);
   useEffect(() => writeStorage(STORAGE_KEYS.cart, cart), [cart]);
   useEffect(() => writeStorage(STORAGE_KEYS.saved, saved), [saved]);
-
   const activeConversation = useMemo(
     () => conversations.find((conversation) => conversation.id === activeId) ?? conversations[0],
     [activeId, conversations]
   );
-
   const products = useMemo(
-    () => uniqueProducts(activeConversation?.messages ?? []),
+    () => latestProducts(activeConversation?.messages ?? []),
     [activeConversation]
   );
-
-  // Derived rather than stored, so the panel can never describe a state that
-  // disagrees with the products actually on screen.
+  const resultsMessageId = products[0]?.sourceMessageId ?? null;
+  const findProduct = useCallback(
+    (id: string): Product | null => {
+      const messages = activeConversation?.messages ?? [];
+      for (let index = messages.length - 1; index >= 0; index -= 1) {
+        const match = messages[index].products.find((product) => product.id === id);
+        if (match) return match;
+      }
+      return null;
+    },
+    [activeConversation]
+  );
   const panel = useMemo(
     () => ({
       open: products.length > 0 && !panelState.dismissed,
@@ -144,14 +149,12 @@ export function ShopProvider({ children }: { children: ReactNode }) {
     }),
     [products.length, panelState.dismissed, panelState.tab, panelState.detailId]
   );
-
   const patchConversation = useCallback(
     (id: string, update: (conversation: Conversation) => Conversation) => {
       setConversations((prev) => prev.map((item) => (item.id === id ? update(item) : item)));
     },
     []
   );
-
   const patchMessage = useCallback(
     (conversationId: string, messageId: string, update: (message: ChatMessage) => ChatMessage) => {
       patchConversation(conversationId, (conversation) => ({
@@ -163,48 +166,67 @@ export function ShopProvider({ children }: { children: ReactNode }) {
     },
     [patchConversation]
   );
-
   const runQuery = useCallback(
     async (query: string, threadId: string | null) => {
       const controller = new AbortController();
       abortRef.current = controller;
       setIsBusy(true);
-
       const assistantId = crypto.randomUUID();
       const conversationId = activeConversation?.id;
       if (!conversationId) return;
-
+      const userId = crypto.randomUUID();
       patchConversation(conversationId, (conversation) => ({
         ...conversation,
         title:
           conversation.title === "New conversation" ? truncateTitle(query) : conversation.title,
         messages: [
           ...conversation.messages,
-          { id: crypto.randomUUID(), role: "user", content: query, status: "done", requestId: null, error: null, products: [] },
-          { id: assistantId, role: "assistant", content: "", status: "pending", requestId: null, error: null, products: [] },
+          {
+            id: userId,
+            role: "user",
+            content: query,
+            status: "done",
+            requestId: null,
+            error: null,
+            products: [],
+            traceId: null,
+            vote: null,
+            feedbackError: null,
+            activity: null,
+          },
+          {
+            id: assistantId,
+            role: "assistant",
+            content: "",
+            status: "pending",
+            requestId: null,
+            error: null,
+            products: [],
+            traceId: null,
+            vote: null,
+            feedbackError: null,
+            activity: null,
+          },
         ],
       }));
-
-      // Tokens arrive far faster than a frame, so they are coalesced into one
-      // state update per frame. Without this the whole message re-renders on
-      // every token, which is what makes a streamed answer look like it is
-      // stuttering rather than writing.
       const pending = new TokenBuffer((text) =>
         patchMessage(conversationId, assistantId, (message) => ({
           ...message,
           content: message.content + text,
         }))
       );
-
       try {
         await streamAgent(
           query,
           threadId,
           {
             onToken: pending.push,
+            onStatus: (text) =>
+              patchMessage(conversationId, assistantId, (message) => ({
+                ...message,
+                activity: message.content ? null : text,
+              })),
             onResult: (response) => {
-              // Flush first, so the streamed text is in place before the final
-              // answer replaces it.
               pending.flush();
               const found = response.used_context.map((item) => toProduct(item, assistantId));
               patchConversation(conversationId, (conversation) => ({
@@ -213,12 +235,14 @@ export function ShopProvider({ children }: { children: ReactNode }) {
                 messages: conversation.messages.map((message) =>
                   message.id === assistantId
                     ? {
-                        ...message,
-                        content: response.answer || message.content,
-                        status: "done" as const,
-                        requestId: response.request_id,
-                        products: found,
-                      }
+                      ...message,
+                      content: response.answer || message.content,
+                      status: "done" as const,
+                      requestId: response.request_id,
+                      traceId: response.trace_id || null,
+                      products: found,
+                      activity: null,
+                    }
                     : message
                 ),
               }));
@@ -233,7 +257,9 @@ export function ShopProvider({ children }: { children: ReactNode }) {
         if (error instanceof DOMException && error.name === "AbortError") {
           patchConversation(conversationId, (conversation) => ({
             ...conversation,
-            messages: conversation.messages.filter((message) => message.id !== assistantId),
+            messages: conversation.messages.filter(
+              (message) => message.id !== assistantId && message.id !== userId
+            ),
           }));
           return;
         }
@@ -245,8 +271,6 @@ export function ShopProvider({ children }: { children: ReactNode }) {
           ),
         }));
       } finally {
-        // A turn that ended without a result event still has to cancel its
-        // pending frame, or it would write into a message that is gone.
         pending.cancel();
         abortRef.current = null;
         setIsBusy(false);
@@ -254,7 +278,6 @@ export function ShopProvider({ children }: { children: ReactNode }) {
     },
     [activeConversation?.id, patchConversation, patchMessage]
   );
-
   const send = useCallback(
     (text: string) => {
       const query = text.trim();
@@ -264,24 +287,71 @@ export function ShopProvider({ children }: { children: ReactNode }) {
     },
     [activeConversation?.threadId, isBusy, runQuery]
   );
-
   const stop = useCallback(() => abortRef.current?.abort(), []);
-
-  const retry = useCallback(() => {
-    const messages = activeConversation?.messages ?? [];
-    const lastUser = [...messages].reverse().find((message) => message.role === "user");
-    if (!lastUser || isBusy) return;
-
-    const failedId = [...messages].reverse().find((message) => message.status === "error")?.id;
-    if (failedId) {
+  const retry = useCallback(
+    (messageId?: string) => {
+      const messages = activeConversation?.messages ?? [];
+      if (messages.length === 0 || isBusy) return;
+      const target = messageId
+        ? messages.findIndex((message) => message.id === messageId)
+        : messages.length - 1;
+      if (target < 0) return;
+      let questionIndex = target;
+      while (questionIndex >= 0 && messages[questionIndex].role !== "user") questionIndex -= 1;
+      if (questionIndex < 0) return;
+      const question = messages[questionIndex].content;
+      const replaced = new Set<string>([messages[questionIndex].id]);
+      if (messages[target].role === "assistant") replaced.add(messages[target].id);
+      for (const message of messages) {
+        if (message.status === "error") replaced.add(message.id);
+      }
       patchConversation(activeConversation.id, (conversation) => ({
         ...conversation,
-        messages: conversation.messages.filter((message) => message.id !== failedId),
+        messages: conversation.messages.filter((message) => !replaced.has(message.id)),
       }));
-    }
-    void runQuery(lastUser.content, activeConversation.threadId);
-  }, [activeConversation, isBusy, patchConversation, runQuery]);
-
+      void runQuery(question, activeConversation.threadId);
+    },
+    [activeConversation, isBusy, patchConversation, runQuery]
+  );
+  const sendFeedback = useCallback(
+    async (messageId: string, feedback: { score?: number | null; text?: string }) => {
+      const message = activeConversation?.messages.find((item) => item.id === messageId);
+      if (!message) return;
+      if (!message.traceId) {
+        patchMessage(activeConversation.id, messageId, (current) => ({
+          ...current,
+          feedbackError: "This answer has no trace, so it cannot be rated.",
+        }));
+        return;
+      }
+      try {
+        const result = await submitFeedback({
+          trace_id: message.traceId,
+          feedback_score: feedback.score ?? null,
+          feedback_text: feedback.text ?? "",
+          thread_id: activeConversation.threadId,
+        });
+        if (result.status !== "recorded") {
+          patchMessage(activeConversation.id, messageId, (current) => ({
+            ...current,
+            feedbackError: `The feedback was not recorded (status: ${result.status}).`,
+          }));
+          return;
+        }
+        patchMessage(activeConversation.id, messageId, (current) => ({
+          ...current,
+          vote: feedback.score === 1 ? "up" : feedback.score === -1 ? "down" : current.vote,
+          feedbackError: null,
+        }));
+      } catch (error) {
+        patchMessage(activeConversation.id, messageId, (current) => ({
+          ...current,
+          feedbackError: error instanceof Error ? error.message : "The feedback could not be saved.",
+        }));
+      }
+    },
+    [activeConversation, patchMessage]
+  );
   const newChat = useCallback(() => {
     abortRef.current?.abort();
     const conversation = newConversation();
@@ -290,7 +360,6 @@ export function ShopProvider({ children }: { children: ReactNode }) {
     setPanel({ tab: "results", detailId: null, dismissed: false });
     setCompare([]);
   }, []);
-
   const selectConversation = useCallback(
     (id: string) => {
       abortRef.current?.abort();
@@ -300,7 +369,6 @@ export function ShopProvider({ children }: { children: ReactNode }) {
     },
     []
   );
-
   const deleteConversation = useCallback(
     (id: string) => {
       const remaining = conversations.filter((conversation) => conversation.id !== id);
@@ -310,7 +378,6 @@ export function ShopProvider({ children }: { children: ReactNode }) {
     },
     [activeId, conversations]
   );
-
   const askAbout = useCallback(
     (product: Product) => {
       setAttached(product);
@@ -318,7 +385,6 @@ export function ShopProvider({ children }: { children: ReactNode }) {
     },
     []
   );
-
   const addToCart = useCallback(
     (product: Product, quantity = 1) => {
       setCart((prev) => {
@@ -337,7 +403,6 @@ export function ShopProvider({ children }: { children: ReactNode }) {
     },
     []
   );
-
   const setQuantity = useCallback((productId: string, quantity: number) => {
     setCart((prev) =>
       quantity <= 0
@@ -345,7 +410,6 @@ export function ShopProvider({ children }: { children: ReactNode }) {
         : prev.map((line) => (line.product.id === productId ? { ...line, quantity } : line))
     );
   }, []);
-
   const removeFromCart = useCallback(
     (productId: string) => {
       const line = cart.find((item) => item.product.id === productId);
@@ -360,7 +424,6 @@ export function ShopProvider({ children }: { children: ReactNode }) {
     },
     [cart]
   );
-
   const toggleSaved = useCallback((product: Product) => {
     setSaved((prev) => {
       const exists = prev.some((item) => item.id === product.id);
@@ -368,7 +431,6 @@ export function ShopProvider({ children }: { children: ReactNode }) {
       return exists ? prev.filter((item) => item.id !== product.id) : [product, ...prev];
     });
   }, []);
-
   const toggleCompare = useCallback(
     (product: Product) => {
       setCompare((prev) => {
@@ -383,28 +445,27 @@ export function ShopProvider({ children }: { children: ReactNode }) {
     },
     []
   );
-
   const openPanel = useCallback((tab: PanelTab = "results", detailId: string | null = null) => {
     setPanel({ tab, detailId, dismissed: false });
   }, []);
-
   const closePanel = useCallback(
     () => setPanel((prev) => ({ ...prev, dismissed: true, detailId: null })),
     []
   );
   const showDetail = useCallback(
     (product: Product) =>
-    setPanel((prev) => ({ ...prev, dismissed: false, detailId: product.id })),
+      setPanel((prev) => ({ ...prev, dismissed: false, detailId: product.id })),
     []
   );
   const hideDetail = useCallback(() => setPanel((prev) => ({ ...prev, detailId: null })), []);
-
   const value = useMemo<ShopContextValue>(
     () => ({
       conversations,
       activeConversation,
       isBusy,
       products,
+      resultsMessageId,
+      findProduct,
       cart,
       saved,
       compare,
@@ -414,6 +475,7 @@ export function ShopProvider({ children }: { children: ReactNode }) {
       send,
       stop,
       retry,
+      sendFeedback,
       newChat,
       selectConversation,
       deleteConversation,
@@ -435,6 +497,8 @@ export function ShopProvider({ children }: { children: ReactNode }) {
       activeConversation,
       isBusy,
       products,
+      resultsMessageId,
+      findProduct,
       cart,
       saved,
       compare,
@@ -444,6 +508,7 @@ export function ShopProvider({ children }: { children: ReactNode }) {
       send,
       stop,
       retry,
+      sendFeedback,
       newChat,
       selectConversation,
       deleteConversation,
@@ -459,17 +524,14 @@ export function ShopProvider({ children }: { children: ReactNode }) {
       hideDetail,
     ]
   );
-
   return <ShopContext.Provider value={value}>{children}</ShopContext.Provider>;
 }
-
 // eslint-disable-next-line react-refresh/only-export-components
 export function useShop() {
   const context = useContext(ShopContext);
   if (!context) throw new Error("useShop must be used inside a ShopProvider");
   return context;
 }
-
 function truncateTitle(text: string): string {
   const clean = text.trim();
   return clean.length > 48 ? `${clean.slice(0, 48)}…` : clean;

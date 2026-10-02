@@ -1,6 +1,5 @@
 import { useTheme } from "next-themes";
 import { HelpCircle, LogOut, Moon, Settings, Sun } from "lucide-react";
-
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import {
   DropdownMenu,
@@ -15,11 +14,9 @@ import {
   SidebarMenuButton,
   SidebarMenuItem,
 } from "@/components/ui/sidebar";
-
 export function AccountMenu() {
   const { resolvedTheme, setTheme } = useTheme();
   const isDark = resolvedTheme === "dark";
-
   return (
     <SidebarMenu>
       <SidebarMenuItem>

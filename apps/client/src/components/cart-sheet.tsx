@@ -1,15 +1,12 @@
 import { X } from "lucide-react";
-
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 import { useShop } from "@/context/shop-context";
 import { formatPrice } from "@/lib/format";
-
 export function CartSheet({ count }: { count: number }) {
   const { cart, setQuantity, removeFromCart, openPanel } = useShop();
   const total = cart.reduce((sum, line) => sum + (line.product.price ?? 0) * line.quantity, 0);
-
   return (
     <Sheet>
       <SheetTrigger

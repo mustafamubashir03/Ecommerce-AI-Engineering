@@ -1,10 +1,3 @@
-"""Prompt text, from two places.
-
-The agent's wording lives in `config.yaml` under `agent.prompts`, and the `/rag/`
-template lives in a YAML file in the `prompts` directory. Both are here so a
-prompt can be found, checked and edited without reading any agent code.
-"""
-
 from pathlib import Path
 
 import yaml

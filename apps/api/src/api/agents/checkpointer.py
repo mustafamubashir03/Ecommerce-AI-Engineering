@@ -9,11 +9,6 @@ from api.core.settings import get_settings
 
 
 def get_checkpointer():
-    """Postgres checkpointer, so a conversation survives a restart.
-
-    Set DATABASE_URL to enable it. Without it we fall back to the in memory
-    saver, which only lives as long as the process.
-    """
     database_url = get_settings().database_url
     if not database_url:
         return InMemorySaver()

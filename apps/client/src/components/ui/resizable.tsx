@@ -1,6 +1,5 @@
 import { cn } from "cn"
 import * as ResizablePrimitive from "react-resizable-panels"
-
 function ResizablePanelGroup({
   className,
   ...props
@@ -9,9 +8,6 @@ function ResizablePanelGroup({
     <ResizablePrimitive.Group
       data-slot="resizable-panel-group"
       className={cn(
-        // min-w-0 and overflow-hidden matter: as a flex child this group keeps
-        // an automatic minimum size, so wide content inside a panel can push
-        // the whole page wider than the viewport instead of being clipped.
         "flex h-full w-full min-w-0 overflow-hidden aria-[orientation=vertical]:flex-col",
         className
       )}
@@ -19,7 +15,6 @@ function ResizablePanelGroup({
     />
   )
 }
-
 function ResizablePanel({ className, ...props }: ResizablePrimitive.PanelProps) {
   return (
     <ResizablePrimitive.Panel
@@ -29,7 +24,6 @@ function ResizablePanel({ className, ...props }: ResizablePrimitive.PanelProps) 
     />
   )
 }
-
 function ResizableHandle({
   withHandle,
   className,
@@ -52,5 +46,4 @@ function ResizableHandle({
     </ResizablePrimitive.Separator>
   )
 }
-
 export { ResizableHandle, ResizablePanel, ResizablePanelGroup }

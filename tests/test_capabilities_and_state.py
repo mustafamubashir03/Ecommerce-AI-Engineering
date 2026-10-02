@@ -1,10 +1,3 @@
-"""The model's own configuration, and the conversation state behind it.
-
-Two things are worth pinning: that the timeout written in seconds reaches the
-client as seconds, and that a multi-turn conversation on one thread id does not
-lose, duplicate or leak messages.
-"""
-
 import asyncio
 import inspect
 
@@ -23,16 +16,7 @@ PRODUCTS = [
 ]
 
 
-# --- the configured timeout reaches the client ------------------------------
-
-
 def test_the_configured_timeout_reaches_the_client_as_seconds(monkeypatch):
-    """`config.yaml` says seconds, and the client is given seconds.
-
-    The OpenAI client takes a timeout in seconds, so no conversion happens
-    anywhere. A conversion here would turn 120 into 120000 and hide every
-    timeout behind a two minute hang.
-    """
     from langchain_openai import ChatOpenAI
 
     from api.agents.llm import get_chat_model
@@ -54,15 +38,11 @@ def test_the_configured_timeout_reaches_the_client_as_seconds(monkeypatch):
 
 
 def test_no_millisecond_timeout_key_is_left_in_the_config():
-    """One timeout, in one unit. A second key would be a second opinion."""
     from api.core.settings import get_settings
 
     llm = get_settings().llm
-    assert not hasattr(llm, "timeout_ms")
-    assert not hasattr(llm, "max_retries"), "a single provider has nothing to retry against"
-
-
-# --- the model is one client, built once ------------------------------------
+    assert not hasattr(llm, "timeout_ms"), "one timeout, in one unit"
+    assert llm.max_retries == 0, "the provider client must not retry on its own"
 
 
 def test_the_model_is_built_once():
@@ -80,9 +60,6 @@ def test_the_agent_does_not_block_the_event_loop():
     assert asyncio.iscoroutinefunction(model._agenerate)
 
 
-# --- the intent router is the one structured call ---------------------------
-
-
 def test_the_intent_router_asks_for_the_response_model():
     """It goes through instructor, so any OpenAI-compatible model can answer."""
 
@@ -91,10 +68,6 @@ def test_the_intent_router_asks_for_the_response_model():
     source = inspect.getsource(agent_module)
     assert "response_model=IntentRouterResponse" in source, "the schema is requested, not parsed"
     assert "get_instructor_client" in source
-
-
-
-# --- conversation state ------------------------------------------------------
 
 
 @pytest.fixture
@@ -118,8 +91,6 @@ def agent_graph(monkeypatch):
             "retrieved_context_ratings": [p["rating"] for p in PRODUCTS],
         },
     )
-    # The answer's citations are hydrated against the real catalogue, which is a
-    # Qdrant call. These tests are about conversation state, not retrieval.
     monkeypatch.setattr(shopping, "hydrate_used_context", lambda pairs: list(PRODUCTS))
 
     workflow = graph_module.StateGraph(graph_module.State)

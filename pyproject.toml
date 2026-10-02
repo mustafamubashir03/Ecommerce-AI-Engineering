@@ -12,7 +12,6 @@ dependencies = [
     "pydantic-settings>=2.14.2",
     "python-dotenv>=1.2.2",
     "fastapi>0.115.0",
-    "streamlit>=1.58.0",
     "langchain-community>=0.4.1",
     "cohere>=7.0.5",
     "instructor>=1.15.4",
@@ -21,7 +20,6 @@ dependencies = [
 [tool.uv.workspace]
 members = [
     "apps/api",
-    "apps/chatbot_ui",
 ]
 
 [dependency-groups]

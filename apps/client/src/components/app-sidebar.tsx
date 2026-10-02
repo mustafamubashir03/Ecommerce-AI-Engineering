@@ -1,5 +1,4 @@
 import { MessageSquarePlus, Trash2 } from "lucide-react";
-
 import { AccountMenu } from "@/components/account-menu";
 import {
   Sidebar,
@@ -17,16 +16,13 @@ import {
 } from "@/components/ui/sidebar";
 import { useShop } from "@/context/shop-context";
 import type { Conversation } from "@/types/ecommerce";
-
 const DAY = 24 * 60 * 60 * 1000;
-
 function bucketOf(createdAt: number): "Today" | "Yesterday" | "Earlier" {
   const age = Date.now() - createdAt;
   if (age < DAY) return "Today";
   if (age < 2 * DAY) return "Yesterday";
   return "Earlier";
 }
-
 function groupByRecency(conversations: Conversation[]) {
   const groups: { label: "Today" | "Yesterday" | "Earlier"; items: Conversation[] }[] = [
     { label: "Today", items: [] },
@@ -38,11 +34,9 @@ function groupByRecency(conversations: Conversation[]) {
   }
   return groups.filter((group) => group.items.length > 0);
 }
-
 export function AppSidebar() {
   const { conversations, activeConversation, newChat, selectConversation, deleteConversation } = useShop();
   const groups = groupByRecency(conversations);
-
   return (
     <Sidebar collapsible="icon">
       <SidebarHeader>
@@ -55,7 +49,6 @@ export function AppSidebar() {
           </span>
         </div>
       </SidebarHeader>
-
       <SidebarContent>
         <SidebarGroup>
           <SidebarGroupContent>
@@ -69,7 +62,6 @@ export function AppSidebar() {
             </SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>
-
         {groups.map((group) => (
           <SidebarGroup key={group.label}>
             <SidebarGroupLabel>{group.label}</SidebarGroupLabel>
@@ -99,11 +91,9 @@ export function AppSidebar() {
           </SidebarGroup>
         ))}
       </SidebarContent>
-
       <SidebarFooter>
         <AccountMenu />
       </SidebarFooter>
-
       <SidebarRail />
     </Sidebar>
   );

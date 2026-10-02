@@ -1,6 +1,5 @@
 import { Heart, Plus, Star } from "lucide-react";
 import { motion, useReducedMotion } from "framer-motion";
-
 import { AspectRatio } from "@/components/ui/aspect-ratio";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -13,7 +12,6 @@ import { formatPrice, formatRating } from "@/lib/format";
 import { enterUp, pressable } from "@/lib/motion";
 import { cn } from "@/lib/utils";
 import type { Product } from "@/types/ecommerce";
-
 export function ProductCard({
   product,
   featured = false,
@@ -33,7 +31,6 @@ export function ProductCard({
   const isSaved = saved.some((item) => item.id === product.id);
   const isCompared = compare.some((item) => item.id === product.id);
   const open = () => (onOpen ? onOpen(product) : showDetail(product));
-
   return (
     <motion.div
       variants={reduced ? undefined : enterUp}
@@ -66,7 +63,6 @@ export function ProductCard({
             </AspectRatio>
             {featured ? <Badge className="absolute left-2 top-2">Best pick</Badge> : null}
           </motion.button>
-
           <div className="space-y-1">
             <button
               type="button"
@@ -75,7 +71,6 @@ export function ProductCard({
             >
               {product.title}
             </button>
-
             {rating ? (
               <div className="flex items-center gap-1 text-xs text-muted-foreground">
                 <Star className="size-3 fill-primary text-primary" aria-hidden="true" />
@@ -83,14 +78,11 @@ export function ProductCard({
                 <span>average rating</span>
               </div>
             ) : null}
-
             <p className="text-base font-semibold text-foreground">{formatPrice(product.price)}</p>
-
             {!compact && product.reason ? (
               <p className="line-clamp-2 text-xs text-muted-foreground">{product.reason}</p>
             ) : null}
           </div>
-
           <div className="mt-auto flex flex-wrap items-center gap-1.5 pt-1">
             <motion.div variants={reduced ? undefined : pressable} whileTap={reduced ? undefined : "press"}>
               <Button
@@ -104,7 +96,6 @@ export function ProductCard({
                 Add to cart
               </Button>
             </motion.div>
-
             <Tooltip>
               <TooltipTrigger
                 render={
@@ -127,7 +118,6 @@ export function ProductCard({
               </TooltipTrigger>
               <TooltipContent>{isSaved ? "Remove from saved" : "Save for later"}</TooltipContent>
             </Tooltip>
-
             <label className="flex cursor-pointer items-center gap-1.5 rounded-md px-1.5 py-1 text-xs text-muted-foreground hover:text-foreground">
               <Checkbox
                 checked={isCompared}
@@ -137,7 +127,6 @@ export function ProductCard({
               Compare
             </label>
           </div>
-
           <Button variant="link" size="sm" className="h-auto justify-start p-0" onClick={() => askAbout(product)}>
             Ask about this
           </Button>
@@ -146,7 +135,6 @@ export function ProductCard({
     </motion.div>
   );
 }
-
 export function ProductCardSkeleton() {
   return (
     <Card className="gap-0 overflow-hidden border-border py-0 shadow-sm">

@@ -1,15 +1,6 @@
-"""Reading a provider failure: what status it meant, and what it said.
-
-There is no routing policy here, because there is no fallback to decide about.
-This answers the two questions the endpoint asks: what HTTP status did the
-provider really mean, and what did it actually say.
-"""
-
 import json
 import re
 
-# A provider can report the failure inside a 200 response body, so the number
-# the provider put in the body wins over the status on the wire.
 _STATUS_IN_TEXT = re.compile(
     r"(?:code|status)\s*[:=]\s*(?P<status>[1-5]\d{2})\b|\bHTTP\s+(?P<http_status>[1-5]\d{2})\b",
     re.IGNORECASE,
@@ -63,19 +54,6 @@ def _as_status(value) -> int | None:
 
 
 def status_of(error: BaseException) -> int | None:
-    """The status a failure means, not the status the wire carried.
-
-    A streamed answer can open its HTTP connection successfully and only then
-    report the failure inside the stream, in which case the transport status is
-    a plain 200. So, in order:
-
-    1. a non-2xx code the provider put in the response body;
-    2. the status the exception itself carries;
-    3. a status the provider named in its own prose.
-
-    The body is read as JSON and never scanned for loose numbers, so a product
-    id or a price in a message cannot be mistaken for a status.
-    """
     from_body = _as_status(_error_object(error).get("code"))
     if from_body is not None and not 200 <= from_body < 300:
         return from_body

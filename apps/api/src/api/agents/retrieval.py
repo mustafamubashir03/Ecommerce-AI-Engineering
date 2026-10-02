@@ -1,40 +1,23 @@
-"""The catalogue: clients, embeddings, and the search itself.
-
-This is the only module that talks to Qdrant or to the embedding provider. Both
-clients are built once at import from `config.yaml` and the environment, so
-pointing either at a different host or a different key is a config edit:
-
-    qdrant_client = QdrantClient(url=...)                 from llm/storage config
-    co            = cohere.ClientV2(api_key=...)         COHERE_API_KEY
-
-Two searches live here. `retrieve_data` is the hybrid one the agent uses, dense
-vectors fused with BM25. `retrieve_data_dense` is the plain single-vector search,
-kept because it is what you reach for when you are checking whether the hybrid
-ranking is actually helping.
-"""
-
 import os
 
 import cohere
-from langsmith import traceable
 from qdrant_client import QdrantClient
 from qdrant_client.conversions.common_types import Document, Prefetch
 from qdrant_client.http.models import FusionQuery
 from qdrant_client.models import FieldCondition, Filter, MatchValue
 
 from api.core.settings import get_settings
+from api.core.tracing import traced
 
 _settings = get_settings()
 _retrieval = _settings.retrieval
 _fields = _retrieval.fields
 
-# Both clients are injected, never hardcoded: the url and the env var name of the
-# key both come from config.yaml.
 qdrant_client = QdrantClient(url=_settings.qdrant_url)
 co = cohere.ClientV2(api_key=os.getenv(_settings.embedding.api_key_env))
 
 
-@traceable(
+@traced(
     name="embed_query",
     run_type="embedding",
     metadata={
@@ -57,13 +40,6 @@ def generate_embedding(text: str) -> list:
 
 
 def _rows(points, k: int) -> dict:
-    """The four parallel lists the rest of the application expects.
-
-    The catalogue stores several chunks per product, so fusing dense and sparse
-    hits can surface the same product more than once. Points are collapsed to one
-    per product here, keeping the best score, so the model and the UI both see
-    each product once and the requested count is worth asking for.
-    """
     unique: dict[str, dict] = {}
     for point in points:
         payload = point.payload or {}
@@ -86,7 +62,7 @@ def _rows(points, k: int) -> dict:
     }
 
 
-@traceable(name="retrieving_data", run_type="retriever")
+@traced(name="retrieving_data", run_type="retriever")
 def retrieve_data(query: str, k: int | None = None) -> dict:
     """Hybrid search: dense vectors + BM25, fused with reciprocal rank fusion."""
     k = k or _retrieval.top_k
@@ -107,7 +83,7 @@ def retrieve_data(query: str, k: int | None = None) -> dict:
     return _rows(results.points, k)
 
 
-@traceable(name="retrieving_data_dense", run_type="retriever")
+@traced(name="retrieving_data_dense", run_type="retriever")
 def retrieve_data_dense(query: str, k: int | None = None) -> dict:
     """Single vector search, no fusion. The simpler baseline for the hybrid one."""
     k = k or _retrieval.top_k
@@ -120,11 +96,6 @@ def retrieve_data_dense(query: str, k: int | None = None) -> dict:
 
 
 def fetch_product_payloads(product_ids) -> dict:
-    """Fetch the stored payload for each product id (order preserved, no dupes).
-
-    Uses scroll with a filter: this collection only declares named vectors, so a
-    vector-less lookup is both correct and cheaper than a search.
-    """
     payloads: dict[str, dict] = {}
 
     seen: set = set()
@@ -154,13 +125,6 @@ def fetch_product_payloads(product_ids) -> dict:
 
 
 def hydrate_used_context(references) -> list:
-    """Turn (id, description) references into UI-ready used-context items.
-
-    The catalogue stores several chunks per product, so a search can return the
-    same product more than once. Each product is therefore emitted once, in the
-    order it was first referenced, and an empty description falls back to the
-    stored product description.
-    """
     references = list(references or [])
     payloads = fetch_product_payloads([item[0] for item in references])
 
@@ -172,8 +136,6 @@ def hydrate_used_context(references) -> list:
         payload = payloads.get(product_id)
         if not payload:
             continue
-        # No image means the card would render blank, so the product is left out
-        # rather than shown as an empty box.
         image_url = payload.get(_fields.image)
         if not image_url:
             continue

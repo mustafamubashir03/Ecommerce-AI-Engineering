@@ -1,5 +1,3 @@
-/** Mirrors the FastAPI contract exactly. Nothing here is invented on the client. */
-
 export interface RAGUsedContext {
   id: string;
   image_url: string;
@@ -7,17 +5,15 @@ export interface RAGUsedContext {
   description: string;
   rating: number | null;
 }
-
 export interface RagResponse {
   request_id: string;
   answer: string;
   question_relevancy: boolean;
   used_context: RAGUsedContext[];
   thread_id: string | null;
+  trace_id: string;
 }
-
 export type MessageStatus = "pending" | "done" | "error";
-
 export interface ChatMessage {
   id: string;
   role: "user" | "assistant";
@@ -26,8 +22,11 @@ export interface ChatMessage {
   requestId: string | null;
   error: string | null;
   products: Product[];
+  traceId: string | null;
+  vote: "up" | "down" | null;
+  feedbackError: string | null;
+  activity: string | null;
 }
-
 export interface Conversation {
   id: string;
   title: string;
@@ -35,31 +34,24 @@ export interface Conversation {
   threadId: string | null;
   messages: ChatMessage[];
 }
-
-/** A product as the UI needs it, derived from one RAGUsedContext entry. */
 export interface Product {
   id: string;
   title: string;
   imageUrl: string;
   price: number | null;
   rating: number | null;
-  /** The agent's own one-line justification, straight from the API. */
   reason: string;
-  /** Message that surfaced this product, used to highlight it in chat. */
   sourceMessageId: string | null;
 }
-
 export interface CartLine {
   product: Product;
   quantity: number;
 }
-
 export type PanelTab = "results" | "saved" | "cart";
 export type SortKey = "relevance" | "price-asc" | "price-desc" | "rating";
-
-/** Server sent events from POST /agent/stream. */
 export type AgentStreamEvent =
   | { type: "token"; text: string }
+  | { type: "status"; text: string }
   | { type: "result"; payload: RagResponse }
   | { type: "error"; message: string; status: number | null }
   | { type: "done" };

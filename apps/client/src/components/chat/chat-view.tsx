@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ArrowDown, PanelRight } from "lucide-react";
 import { AnimatePresence, motion } from "framer-motion";
-
 import { ChatComposer } from "@/components/chat/chat-composer";
 import { ChatEmptyState } from "@/components/chat/chat-empty-state";
 import { ChatMessageRow } from "@/components/chat/chat-message";
@@ -10,9 +9,7 @@ import type { Product } from "@/types/ecommerce";
 import { useShop } from "@/context/shop-context";
 import { DESKTOP, useMediaQuery } from "@/hooks/use-media-query";
 import { EASE } from "@/lib/motion";
-
 const PIN_THRESHOLD = 64;
-
 export function ChatView({
   onOpenProduct,
   onShowResults,
@@ -20,32 +17,36 @@ export function ChatView({
   onOpenProduct?: (product: Product) => void;
   onShowResults?: () => void;
 }) {
-  const { activeConversation, products, isBusy, openPanel } = useShop();
+  const { activeConversation, products, resultsMessageId, isBusy, openPanel } = useShop();
   const messages = activeConversation.messages;
   const viewportRef = useRef<HTMLDivElement>(null);
   const [pinned, setPinned] = useState(true);
   const isDesktop = useMediaQuery(DESKTOP);
-
+  const followedRef = useRef(0);
+  const last = messages[messages.length - 1];
+  const tailLength = `${messages.length}:${last?.content.length ?? 0}`;
   const scrollToLatest = useCallback((behavior: ScrollBehavior = "smooth") => {
     const element = viewportRef.current;
     if (element) element.scrollTo({ top: element.scrollHeight, behavior });
   }, []);
-
   useEffect(() => {
-    if (pinned) scrollToLatest("auto");
-  }, [messages, isBusy, pinned, scrollToLatest]);
-
+    if (!pinned) return;
+    const element = viewportRef.current;
+    if (!element) return;
+    if (element.scrollHeight === followedRef.current) return;
+    followedRef.current = element.scrollHeight;
+    element.scrollTop = element.scrollHeight;
+  }, [tailLength, isBusy, pinned]);
+  const conversationId = activeConversation.id;
+  useEffect(() => {
+    followedRef.current = 0;
+  }, [conversationId]);
   const onScroll = (event: React.UIEvent<HTMLDivElement>) => {
     const element = event.currentTarget;
     const distance = element.scrollHeight - element.scrollTop - element.clientHeight;
     setPinned(distance < PIN_THRESHOLD);
   };
-
   return (
-    // h-full, not flex-1: the resizable panel is a plain element, not a flex
-    // container, so a flex child here would grow to the height of the messages
-    // and push the composer off the bottom of the screen. The message list has
-    // to scroll inside a bounded column for the composer to stay put.
     <div className="flex h-full min-h-0 flex-col">
       {messages.length === 0 ? (
         <div className="flex min-h-0 flex-1 flex-col justify-center">
@@ -65,15 +66,12 @@ export function ChatView({
                       key={message.id}
                       message={message}
                       onOpenProduct={onOpenProduct}
-                      highlighted={products.some(
-                        (product) => product.sourceMessageId === message.id
-                      )}
+                      highlighted={resultsMessageId === message.id}
                     />
                   ))}
                 </div>
               </div>
             </div>
-
             {!pinned ? (
               <div className="pointer-events-none absolute inset-x-0 bottom-4 flex justify-center">
                 <Button
@@ -91,11 +89,6 @@ export function ChatView({
               </div>
             ) : null}
           </div>
-
-          {/* On a phone the results live in a sheet, so this is the way in. It
-              sits in the column above the composer rather than floating over
-              it, which is what would otherwise cover the input on a short
-              screen. */}
           <AnimatePresence initial={false}>
             {products.length > 0 && !isDesktop ? (
               <motion.div
@@ -117,7 +110,6 @@ export function ChatView({
               </motion.div>
             ) : null}
           </AnimatePresence>
-
           <ChatComposer />
         </>
       )}

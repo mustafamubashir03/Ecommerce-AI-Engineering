@@ -6,11 +6,19 @@ import threading
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
-from api.agents.graph import run_agent, stream_agent
+from api.agents.graph import run_agent
 from api.agents.errors import ProviderError, describe
-from api.agents.rag import rag_pipeline_wrapper
+from api.agents.rag import rag_agent_stream_wrapper, rag_pipeline_wrapper
 from api.agents.text import optional
-from api.models import AgentRequest, RAGUsedContext, RagRequest, RagResponse
+from api.core.tracing import get_trace_client
+from api.models import (
+    AgentRequest,
+    FeedbackRequest,
+    FeedbackResponse,
+    RAGUsedContext,
+    RagRequest,
+    RagResponse,
+)
 
 logging.basicConfig(
     level=logging.INFO,
@@ -20,10 +28,8 @@ logger = logging.getLogger(__name__)
 
 rag_router = APIRouter()
 agent_router = APIRouter()
+feedback_router = APIRouter()
 
-# The provider owns the meaning of its own status codes, so they are passed
-# through untouched and only the ones that mean "the caller sent something we
-# cannot serve" are translated.
 PROVIDER_STATUS = frozenset({401, 402, 403, 404, 422, 429})
 
 
@@ -51,11 +57,6 @@ def agent(request: Request, payload: AgentRequest) -> RagResponse:
 
 @agent_router.post("/stream")
 async def agent_stream(request: Request, payload: AgentRequest) -> StreamingResponse:
-    """Server sent events: token chunks as the agent writes, then the result.
-
-    The result event carries exactly the same body as POST /agent/, so a
-    streaming client sees one response contract rather than two.
-    """
     return StreamingResponse(
         _events(request, payload),
         media_type="text/event-stream",
@@ -64,12 +65,6 @@ async def agent_stream(request: Request, payload: AgentRequest) -> StreamingResp
 
 
 def _user_message(failure: ProviderError) -> str:
-    """What the caller is told, without the provider's own words.
-
-    A real body can carry an account or organization id, the service tier and a
-    billing link, none of which belong in a response sent to a browser. The full
-    failure is logged instead, so the details are still available server side.
-    """
     if failure.status == 413:
         return (
             "That question needs more tokens than this model allows in one "
@@ -110,7 +105,60 @@ def _response(request: Request, state: dict) -> RagResponse:
         question_relevancy=bool(state.get("question_relevancy", False)),
         used_context=[RAGUsedContext(**item) for item in state.get("used_context", [])],
         thread_id=state.get("thread_id"),
+        trace_id=optional(state.get("trace_id")),
     )
+
+
+@feedback_router.post("/")
+def feedback(request: Request, payload: FeedbackRequest) -> FeedbackResponse:
+    trace_id = (payload.trace_id or "").strip()
+    comment = (payload.feedback_text or "").strip()
+
+    if not trace_id:
+        raise HTTPException(
+            status_code=400,
+            detail={"error": "No trace to attach this feedback to. Tracing may be switched off."},
+        )
+    if payload.feedback_score is None and not comment:
+        raise HTTPException(
+            status_code=400,
+            detail={"error": "Nothing to record: send a score, a comment, or both."},
+        )
+
+    client = get_trace_client()
+    if client is None:
+        raise HTTPException(
+            status_code=503,
+            detail={"error": "Feedback is unavailable because tracing is not configured."},
+        )
+
+    source_info = {"thread_id": payload.thread_id} if payload.thread_id else None
+
+    def write(key: str, value) -> None:
+        client.create_feedback(
+            trace_id=trace_id,
+            key=key,
+            value=value,
+            feedback_source_type=payload.feedback_source_type,
+            source_info=source_info,
+        )
+
+    try:
+        if payload.feedback_score is not None:
+            write("thumbs", payload.feedback_score)
+        if len(comment) > 0:
+            write("comment", comment)
+    except Exception as error:  # noqa: BLE001 - the caller must be told it was not saved
+        logger.error("feedback was not recorded for trace %s: %s", trace_id, error)
+        raise HTTPException(
+            status_code=502,
+            detail={"error": "The feedback could not be recorded. Please try again."},
+        ) from error
+
+    logger.info(
+        "feedback recorded for trace %s from %s", trace_id, payload.feedback_source_type
+    )
+    return FeedbackResponse(request_id=request.state.request_id, status="recorded")
 
 
 async def _events(request: Request, payload: AgentRequest):
@@ -122,19 +170,14 @@ async def _events(request: Request, payload: AgentRequest):
     def produce() -> None:
         delivered = False
         try:
-            for event in stream_agent(payload.query, payload.thread_id):
+            for event in rag_agent_stream_wrapper(payload.query, payload.thread_id):
                 if event["type"] == "result":
                     delivered = True
-                    # Same shape as the blocking endpoint, request id included.
                     event = {"type": "result", "payload": _response(request, event["payload"]).model_dump()}
                 loop.call_soon_threadsafe(queue.put_nowait, event)
         except Exception as error:
             failure = describe(error)
             if delivered:
-                # The answer and its products have already been sent, so the
-                # turn is complete as far as the client is concerned. Reporting
-                # a failure now would show a finished answer next to an error
-                # banner, so the stream is closed cleanly instead.
                 logger.warning("stream failed after the result was sent: %s", failure)
             else:
                 logger.error("stream failed, provider said: %s", failure)
@@ -163,3 +206,4 @@ async def _events(request: Request, payload: AgentRequest):
 api_router = APIRouter()
 api_router.include_router(rag_router, prefix="/rag", tags=["rag"])
 api_router.include_router(agent_router, prefix="/agent", tags=["agent"])
+api_router.include_router(feedback_router, prefix="/feedback", tags=["feedback"])

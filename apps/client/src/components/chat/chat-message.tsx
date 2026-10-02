@@ -1,6 +1,5 @@
 import { RefreshCw } from "lucide-react";
 import { motion } from "framer-motion";
-
 import { AgentMarkdown } from "@/components/agent-markdown";
 import { InlineResults } from "@/components/chat/inline-results";
 import {
@@ -16,7 +15,6 @@ import { useShop } from "@/context/shop-context";
 import { EASE, enterUp } from "@/lib/motion";
 import { cn } from "@/lib/utils";
 import type { ChatMessage, Product } from "@/types/ecommerce";
-
 export function ChatMessageRow({
   message,
   highlighted,
@@ -27,7 +25,7 @@ export function ChatMessageRow({
   onOpenProduct?: (product: Product) => void;
 }) {
   const { showDetail, retry } = useShop();
-
+  const retryThis = () => retry(message.id);
   if (message.role === "user") {
     return (
       <motion.div
@@ -42,12 +40,10 @@ export function ChatMessageRow({
       </motion.div>
     );
   }
-
   const openCitation = (id: string) => {
     const match = message.products.find((product) => product.id === id);
     if (match) showDetail(match);
   };
-
   return (
     <motion.div
       id={`message-${message.id}`}
@@ -56,25 +52,30 @@ export function ChatMessageRow({
       animate="visible"
       className={cn(
         "group space-y-3 rounded-lg transition-colors",
-        highlighted && "bg-accent px-4 py-3"
+        highlighted && "bg-accent/50 ring-1 ring-inset ring-border"
       )}
     >
       {message.status === "pending" ? (
         message.content ? (
-          // The live region is the streamed text only, so a screen reader
-          // announces the answer being written and not the products after it.
           <div aria-live="polite">
             <StreamingText content={message.content} />
           </div>
         ) : (
-          <PendingBubble />
+          <>
+            <PendingBubble />
+            {message.activity ? (
+              <p role="status" className="mt-2 text-xs text-muted-foreground">
+                {message.activity}
+              </p>
+            ) : null}
+          </>
         )
       ) : message.status === "error" ? (
         <Alert variant="destructive">
           <AlertTitle>The assistant could not answer</AlertTitle>
           <AlertDescription className="space-y-3">
             <p>{message.error}</p>
-            <Button size="sm" variant="outline" onClick={retry}>
+            <Button size="sm" variant="outline" onClick={retryThis}>
               <RefreshCw className="size-3.5" />
               Try again
             </Button>
@@ -88,7 +89,7 @@ export function ChatMessageRow({
             <InlineResults message={message} onOpen={onOpenProduct} />
           ) : null}
           <FollowUps products={message.products} />
-          <MessageActions message={message} onRetry={retry} />
+          <MessageActions message={message} onRetry={retryThis} />
         </>
       )}
     </motion.div>

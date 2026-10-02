@@ -1,15 +1,12 @@
 import * as React from "react"
 import { Popover as PopoverPrimitive } from "@base-ui/react/popover"
 import { cn } from "cn"
-
 function Popover({ ...props }: PopoverPrimitive.Root.Props) {
   return <PopoverPrimitive.Root data-slot="popover" {...props} />
 }
-
 function PopoverTrigger({ ...props }: PopoverPrimitive.Trigger.Props) {
   return <PopoverPrimitive.Trigger data-slot="popover-trigger" {...props} />
 }
-
 function PopoverContent({
   className,
   align = "center",
@@ -43,7 +40,6 @@ function PopoverContent({
     </PopoverPrimitive.Portal>
   )
 }
-
 function PopoverHeader({ className, ...props }: React.ComponentProps<"div">) {
   return (
     <div
@@ -53,7 +49,6 @@ function PopoverHeader({ className, ...props }: React.ComponentProps<"div">) {
     />
   )
 }
-
 function PopoverTitle({ className, ...props }: PopoverPrimitive.Title.Props) {
   return (
     <PopoverPrimitive.Title
@@ -63,7 +58,6 @@ function PopoverTitle({ className, ...props }: PopoverPrimitive.Title.Props) {
     />
   )
 }
-
 function PopoverDescription({
   className,
   ...props
@@ -76,7 +70,6 @@ function PopoverDescription({
     />
   )
 }
-
 export {
   Popover,
   PopoverContent,

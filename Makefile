@@ -1,5 +1,5 @@
 run-docker-compose:
-	uv sync
+	uv sync --all-packages
 	docker-compose up --build
 
 clean-notebook-outputs:

@@ -1,20 +1,7 @@
-"""Every structured model in the application, in one place.
-
-Three groups, all here so there is one file to look at when a field is wrong:
-
-    the request/response contract   what the HTTP API accepts and returns
-    the RAG answer                  what the `/rag/` pipeline returns
-    the intent router's answer      what the first graph node returns
-
-Anything that belongs to exactly one node is defined next to that node instead.
-"""
-
-from typing import List, Optional
+from typing import List, Literal, Optional
 
 from pydantic import BaseModel, Field
 
-
-# --- what the HTTP API accepts and returns ----------------------------------
 
 
 class RagRequest(BaseModel):
@@ -53,9 +40,49 @@ class RagResponse(BaseModel):
         default=None,
         description="Conversation id, echo back on the next turn to keep the history.",
     )
+    trace_id: str = Field(
+        default="",
+        description=(
+            "Id of the trace this answer was produced under, to quote back when "
+            "submitting feedback. Empty when tracing is switched off."
+        ),
+    )
 
 
-# --- what the RAG pipeline returns ------------------------------------------
+class FeedbackRequest(BaseModel):
+
+    feedback_score: Optional[int] = Field(
+        default=None,
+        description="The vote: 1 for helpful, -1 for not, null when no vote was cast.",
+    )
+    feedback_text: str = Field(
+        default="", description="Anything the user typed. Only recorded when it is not blank."
+    )
+    trace_id: str = Field(
+        default="",
+        description="The trace_id that came back with the answer being rated.",
+    )
+    thread_id: Optional[str] = Field(
+        default=None,
+        description="The conversation this answer belongs to, recorded alongside the feedback.",
+    )
+    feedback_source_type: Literal["api", "model"] = Field(
+        default="api",
+        description=(
+            "Who the feedback is from. 'api' is a person using the app, 'model' is a "
+            "model assessing its own output. Only these two exist; anything else is "
+            "rejected by the SDK before it is sent."
+        ),
+    )
+
+
+class FeedbackResponse(BaseModel):
+    request_id: str = Field(..., description="The request id, to quote when reporting a problem.")
+    status: str = Field(
+        ..., description="'recorded' once the feedback has been written."
+    )
+
+
 
 
 class ReferenceItem(BaseModel):

@@ -1,15 +1,12 @@
 import { useRef, useState } from "react";
 import { Send, Square, X } from "lucide-react";
-
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { useShop } from "@/context/shop-context";
-
 export function ChatComposer({ embedded = false }: { embedded?: boolean }) {
   const { send, stop, isBusy, attached, attach } = useShop();
   const [value, setValue] = useState("");
   const textareaRef = useRef<HTMLTextAreaElement>(null);
-
   const submit = () => {
     const query = value.trim();
     if (!query || isBusy) return;
@@ -17,7 +14,6 @@ export function ChatComposer({ embedded = false }: { embedded?: boolean }) {
     setValue("");
     if (textareaRef.current) textareaRef.current.style.height = "auto";
   };
-
   const form = (
     <form
       className="flex items-end gap-2 rounded-xl border border-border bg-card p-2 shadow-md"
@@ -46,7 +42,6 @@ export function ChatComposer({ embedded = false }: { embedded?: boolean }) {
           }
         }}
       />
-
       {isBusy ? (
         <Button
           type="button"
@@ -71,7 +66,6 @@ export function ChatComposer({ embedded = false }: { embedded?: boolean }) {
       )}
     </form>
   );
-
   const chip = attached ? (
     <div className="flex items-center gap-2 text-xs text-muted-foreground">
       <span className="rounded-md bg-accent px-2 py-1 text-accent-foreground">
@@ -88,7 +82,6 @@ export function ChatComposer({ embedded = false }: { embedded?: boolean }) {
       </Button>
     </div>
   ) : null;
-
   if (embedded) {
     return (
       <div className="space-y-2">
@@ -97,7 +90,6 @@ export function ChatComposer({ embedded = false }: { embedded?: boolean }) {
       </div>
     );
   }
-
   return (
     <div className="border-t border-border bg-background px-4 py-4">
       <div className="mx-auto w-full max-w-3xl space-y-2">

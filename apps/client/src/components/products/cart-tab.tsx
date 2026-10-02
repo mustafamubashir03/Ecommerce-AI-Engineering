@@ -1,5 +1,4 @@
 import { Minus, Plus, ShoppingCart, Trash2 } from "lucide-react";
-
 import {
   AlertDialog,
   AlertDialogAction,
@@ -14,11 +13,8 @@ import {
 import { Button } from "@/components/ui/button";
 import { useShop } from "@/context/shop-context";
 import { formatPrice } from "@/lib/format";
-
-/** Cart tab: quantities, removal, and an explicit confirmation before spending. */
 export function CartTab() {
   const { cart, setQuantity, removeFromCart } = useShop();
-
   if (cart.length === 0) {
     return (
       <p className="p-8 text-center text-sm text-muted-foreground">
@@ -26,10 +22,8 @@ export function CartTab() {
       </p>
     );
   }
-
   const total = cart.reduce((sum, line) => sum + (line.product.price ?? 0) * line.quantity, 0);
   const count = cart.reduce((sum, line) => sum + line.quantity, 0);
-
   return (
     <div className="flex h-full min-h-0 flex-col">
       <ul className="min-h-0 flex-1 space-y-4 overflow-y-auto p-4">
@@ -79,7 +73,6 @@ export function CartTab() {
           </li>
         ))}
       </ul>
-
       <div className="space-y-3 border-t border-border p-4">
         <div className="flex items-center justify-between text-sm">
           <span className="text-muted-foreground">
@@ -87,7 +80,6 @@ export function CartTab() {
           </span>
           <span className="font-semibold text-foreground">{formatPrice(total)}</span>
         </div>
-
         <AlertDialog>
           <AlertDialogTrigger
             render={
