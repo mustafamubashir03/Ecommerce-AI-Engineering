@@ -51,7 +51,7 @@ export function ChatMessageRow({
       initial="hidden"
       animate="visible"
       className={cn(
-        "group space-y-3 rounded-lg transition-colors",
+        "group space-y-3 rounded-lg px-4 py-3 transition-colors",
         highlighted && "bg-accent/50 ring-1 ring-inset ring-border"
       )}
     >
